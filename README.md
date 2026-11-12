@@ -1,330 +1,166 @@
-# bimpack — BIM GLB 处理工具链
+# bimpack — BIM GLB 预览与压缩
 
-把「Revit → 3ds Max → GLB → 网页」这条路上踩过的坑，固化成一个可复用的流水线。
-**换楼层只需要换输入文件名**，其余不用改代码。
+把「Revit → 3ds Max → GLB → 网页」这条路上踩过的坑，固化成两个能直接用的东西：
 
-已经在 31F（`117_T_31F_A&S&MEP.glb`）上跑通：208.21 MB → 63.20 MB → 线上传输 **5.14 MB**，19 项校验全绿。
+| 目录 | 是什么 | 怎么用 |
+|---|---|---|
+| **`web/`** | **纯前端应用：上传 → 预览 → 压缩 → 层级树 → 下载** | `cd web && npm i && npm run dev` |
+| `src/` | 命令行批处理：版本修正 → Draco 压缩 → 19 项校验 → 报告 | `node src/cli.mjs build <file.glb>` |
 
----
+日常用 `web/` 就够了：浏览器里拖文件，不上传、不需要服务端。
+`src/` 是同一套逻辑的命令行版，适合批量出交付物、或者机器内存不够跑浏览器的时候。
 
-## 怎么运行（三种方式，任选其一）
-
-**方式 A：双击运行（Windows，最省事）**
-
-在 `bimpack` 文件夹里双击 **`start.cmd`**。
-首次会自动装依赖（约 30 秒），然后自动打开浏览器。关掉那个黑窗口就停止服务。
-
-**方式 B：命令行**
-
-```bash
-cd bimpack
-npm install      # 只需第一次
-npm start        # 等价于 node start.mjs
-```
-
-**方式 C：只要服务，不要自动开浏览器**
-
-```bash
-cd bimpack
-node src/cli.mjs serve          # 或 set NO_OPEN=1 & npm start
-PORT=8081 node src/cli.mjs serve   # 换端口
-```
-
-服务起来后会打印地址，通常是 **http://localhost:8080**：
-
-```
-  BIM 处理台  http://localhost:8080
-  已有楼层    1 个（打开页面后可选择，不再自动加载）
-  上传目录    ...\bimpack\inbox
-```
-
-> 8080 被占用时会自动顺延到 8081、8082…并以实际地址为准（`start.mjs` 会打印出来）。
-> 用 `start.cmd` / `npm start` 时会自动打开浏览器；直接 `serve` 不会。
->
-> 在黑窗口里按 Ctrl+C 时，cmd 可能追问一句「终止批处理操作吗(Y/N)?」—— 按 `Y` 即可。
-> 想省事就直接双击 `stop.cmd`，或干脆关掉那个黑窗口。
-
-### 双击报错「'd' 不是内部或外部命令」怎么办
-
-**已经不会再出现了**，但记一下原因，以后改这两个文件时别踩回去：
-
-`start.cmd` / `stop.cmd` **必须是纯 ASCII 内容 + CRLF 行尾**。
-
-中文 Windows 的 cmd 按代码页 936（GBK）读取批处理文件。如果文件存成 UTF-8 且里面有中文，
-一个汉字的三字节序列会被 GBK 拆成「一个汉字 + 一个尾字节」，而尾字节恰好可能是
-`&`、`|`、`>`、`<` 这类命令分隔符 —— 于是 `cd /d "%~dp0"` 被切成 `cd /` 和 `d`，
-`https://nodejs.org/` 被切成 `?https:` 加后面一截，报出来就是：
-
-```
-'d' 不是内部或外部命令
-'e!' 不是内部或外部命令
-'根' 不是内部或外部命令
-'?https:' 不是内部或外部命令
-```
-
-所以现在这两个 `.cmd` 里**一个中文字符都没有**，所有中文提示都由 `node start.mjs` / `node stop.mjs`
-打印（Node 按 UTF-8 输出，配合开头的 `chcp 65001` 显示正常）。
-
-改完自检一行：
-
-```bash
-python -c "b=open('start.cmd','rb').read(); print('non-ascii', sum(1 for x in b if x>127), '| CRLF', b.count(b'
-
-'))"
-# 期望：non-ascii 0 | CRLF > 0
-```
-
-### 怎么关闭 / 端口怎么释放
-
-**双击 `stop.cmd`**（等价 `npm stop`）。它会读 `.server.json` 里的 PID 把服务连同子进程一起结束，
-再兜底扫一遍残留的 node 进程，最后删掉锁文件。
-
-也可以：
-
-```bash
-npm stop                              # 停止并清理残留
-node start.mjs --restart              # 一键重启（先停再起）
-netstat -ano | findstr :8080          # 万一是别的程序占了端口
-taskkill /PID <上面查到的号> /F
-```
-
-**重复双击不会再占新端口。** 服务启动后会写一个 `.server.json` 记录 PID 和端口；
-再次双击 `start.cmd` 时，启动器发现它已经在跑，只会**打开浏览器**然后退出，不会再起一个新实例。
-
-> 之前"每开一次就多占一个端口"，是因为关窗口时子进程没被带走，残留实例继续占着 8080，
-> 新实例只能顺延到 8081。现在有单实例锁 + `stop.cmd` 兜底扫描，不会再累积。
+> 仓库里**只放代码**，不放模型：`inbox/`、`out/`、`*.glb`、`dist/` 都在 `.gitignore` 里。
+> 本机的 Draco 极限压缩小工具**不在本仓库**（见文末）。
 
 ---
 
-## 只想压一个文件？用 `draco-tool/`
-
-如果不需要 viewer、上传历史、报告这些，只要「拖进去 → 出压缩文件」，
-用 **`draco-tool/`**：双击里面的 `start.cmd`，浏览器打开拖放页面即可。
+## 一、前端应用（web/）
 
 ```bash
-cd draco-tool
-# 双击 start.cmd；或
-node server.mjs        # http://localhost:8099
+cd web
+npm install        # 只需第一次
+npm run dev        # → http://localhost:5173
 ```
 
-它复用同一份 `src/compress.mjs`（Draco edgebreaker + 量化），实测
-**208.24 MB → 60.67 MB（−70.9%，17.3 s，19 项校验全过）**，
-并且会拒绝已经压到极限的文件（≤8 字节/顶点）—— 量化不可逆，再压只会变大。
-
-详见 [`draco-tool/README.md`](draco-tool/README.md)。
-
----
-
-## 用法一：上传即处理（不用敲命令）
+构建成静态站点（GitHub Pages / OSS / COS / Nginx 都行，产物是纯静态、相对路径）：
 
 ```bash
-cd bimpack
-npm i                     # 只需一次
-node src/cli.mjs serve    # 打开 http://localhost:8080
+npm run build      # → web/dist/
+npm run preview    # 本地预览构建产物
 ```
 
-浏览器里：
+打开页面就是一个拖放区，**不会自动加载任何模型**；把 `.glb` 拖进去即可。
 
-0. 打开就是上传页 —— **不会自动加载任何模型**，必须先传或从列表里选一层
-1. 把 `.glb` **拖进方框**（或点一下选文件）
-2. 上传进度条走完 → 自动开始处理，日志实时滚动
-3. 跑完点「查看模型 →」，直接在 3D 里点构件看 BIM 属性
+能做的事：
 
-页面下方列出所有已处理的楼层，点「查看」随时切回去。压缩档位可选 `自动 / 高保真 / 均衡 / 小体积`，
-默认「自动」（源文件已 Draco 时自动用 16bit，否则 14bit）。
+- **直接查看**：只修非法的 `asset.version`，几何一字不动
+- **压缩处理**：`reorder` + `EXT_meshopt_compression` FILTER，实测 208.24 MB → 112.97 MB（−45.7%）
+- **层级树**：源文件是平铺的，按 `extras` 合成「类别 → 类型 → 构件」，也能切系统 / 族 / 标高
+- **BIM 属性**：点构件看全部 `extras`（实测单构件 71 条）
+- **批处理渲染**：12,209 个 Mesh → 29 个 draw call
+- **校验闸门**：压缩后 19 项比对全过才允许下载
 
-**楼层列表的行为**（这三条是踩过坑才补的）：
+详细说明、交互约定、实测数据、每个坑的来龙去脉都在 **[`web/README.md`](web/README.md)**。
 
-- 列表**每 4 秒自动刷新**，切回标签页/窗口时立刻刷新一次；也有手动「刷新」按钮。
-  `/api/*` 响应一律带 `Cache-Control: no-store`，不会被浏览器缓存成旧快照。
-- 处理中断或校验未通过的目录会显示为 **「未完成 · 原因」** 并且**点不进预览**，
-  不会像以前那样以一堆「—」混在列表里让人看不懂。
-- 「未完成」条目右侧有**删除**按钮（只删 `out/` 下的产物，不动 `inbox/` 里的原始上传）。
+### 交互速查
 
-处理在服务器端跑，关掉浏览器也不影响；产物落在 `out/<楼层名>/`。
-
-## 用法二：命令行批处理
-
-```bash
-# 新楼层：一条命令走完全流程（约 1~2 分钟）
-node src/cli.mjs build "D:/导出/117_T_32F_A&S&MEP.glb"
-
-# 看效果
-node src/cli.mjs serve
-# → http://localhost:8080       处理台（上传 + 历史）
-# → /view?run=<楼层>             直接看某一层
-# → /view?raw=1                  对照组（12209 draw call 原样加载）
-```
-
-`build` 会做六件事，中间任何一步出问题都会明确报出来：
-
-```
-▶ build  117_T_31F_A&S&MEP.glb  208.21 MB
-  ✓ 体检          节点 12247 / 图元 12209 / 材质组 29
-  ✓ 版本修正      2.1 → 2.0
-  ✓ Draco 编码     208.21 MB → 63.20 MB  (−69.6%, pos 16bit, 13.8 s)
-  ✓ 属性校验      19 项 · 全部通过  · 变换位移 1.5e-5 单位
-  ✓ 几何保真      最大偏差 0.199 单位 (模型跨度 59357) · 面积差 0.0003%
-  ✓ 预压缩        br 5.14 MB · gz 11.18 MB
-```
-
-产物落在 `out/<楼层名>/`：`*.glb`、`*.glb.br`、`*.glb.gz`、`manifest.json`、`report.md`。
-
----
-
-## 命令
-
-| 命令 | 用途 |
+| 操作 | 结果 |
 |---|---|
-| `node src/cli.mjs inspect <file.glb>` | 体检：版本、扩展、规模、材质分组、属性量、风险项。只读 JSON，秒级 |
-| `node src/cli.mjs build <file.glb>` | 全流程（见上），产出报告与 viewer 可用的 manifest |
-| `node src/cli.mjs verify <a.glb> <b.glb>` | 只比两个文件，`--geo` 追加解码级几何比对 |
-| `node src/cli.mjs serve` | 起 viewer，自动选中 `out/` 下最新的楼层 |
+| 单击构件 / 树节点 | 高亮 + 右侧属性，**相机不动** |
+| 双击 | 相机定位到该构件 |
+| `F` / 「适应视图」 | 回到能看全整个模型的角度 |
+| `1` / `2` | 收起、展开左侧层级树 / 右侧属性 |
+| 搜索框 | 全树按名称过滤，点结果直接选中 |
+| `Esc` | 取消选中 |
+
+---
+
+## 二、命令行（src/）
+
+```bash
+node src/cli.mjs inspect <file.glb>        # 体检：节点/图元/材质/属性/字节每顶点，秒级
+node src/cli.mjs build   <file.glb>        # 全流程：修版本 → Draco → 校验 → 预压缩(.br/.gz) → report.md
+node src/cli.mjs verify  <a.glb> <b.glb>   # 只比两个文件（属性 + 可选几何）
+```
 
 `build` 常用选项：
 
-| 选项 | 说明 |
-|---|---|
-| `--preset high\|balance\|small` | 量化位深预设。默认 `balance`(14bit)；**源文件已 Draco 时自动升到 `high`(16bit)** |
-| `--out <dir>` | 输出根目录，默认 `./out` |
-| `--name <slug>` | 自定义输出目录名（默认由文件名净化，`&` 之类会变 `-`） |
-| `--no-geo` | 跳过解码级几何比对，省 10 s |
-| `--no-gzip` | 只出 `.br`，不出 `.gz` |
-
-### 上传页背后的接口（想接自己的系统时用）
-
-| 接口 | 说明 |
-|---|---|
-| `PUT /api/upload?name=<文件名>` | 请求体就是文件本身（流式落盘到 `inbox/`），返回 `{file,size}` |
-| `POST /api/build` | 体 `{file, preset:"auto|high|balance|small", geo:true}`，返回 `{id}` |
-| `GET /api/job/<id>` | `{status:"running|done|failed", run, lines[], ms}`，前端每 600ms 轮询 |
-| `GET /api/runs` | 已处理楼层列表（含统计、`status: ok\|incomplete`、未完成原因） |
-| `DELETE /api/runs/<run>` | 删除某个楼层的产物目录（不影响 inbox 原始文件） |
-
-上传不用 multipart，直接把 file 当 body PUT 上去，简单且能流式写盘；进度用 XHR 的 `upload.onprogress`。
-
----
-
-## 配置：`bim.config.json`
-
-```json
-{
-  "outDir": "out",
-  "preset": "balance",
-  "geoSamples": 350,
-  "transformTolerance": 0.01,
-  "precompress": { "brotli": { "quality": 11, "lgwin": 24 }, "gzip": true },
-  "viewer": { "dracoDecoderPath": "https://www.gstatic.com/draco/..." }
-}
+```
+--preset high|balance|small   量化位深（默认 balance；源已是 Draco 时自动升为 high）
+--out <dir>                   输出根目录（默认 ./out）
+--name <slug>                 输出目录名
+--no-geo                      跳过解码级几何比对（更快）
+--no-gzip                     只要 .br，不生成 .gz
 ```
 
-| 键 | 含义 |
-|---|---|
-| `preset` | 默认位深档，可被 `--preset` 覆盖 |
-| `geoSamples` | 几何比对抽样图元数，越大越慢越准（350 约 9 s） |
-| `transformTolerance` | 变换等价的角点位移容差，单位同模型。mm 模型 0.01 = 10 µm |
-| `precompress` | 传输层预压缩参数 |
+产物目录里会有 `report.md`、`manifest.json` 和预压缩文件。配置在 `bim.config.json`。
+
+208 MB / 795,727 条属性这条链路要 8 GB 堆，CLI 会自动用子进程放大堆，不用手动加参数。
 
 ---
 
-## 流水线每一步在解决什么
+## 实测数据（117_T_31F A&S&MEP）
 
-### 1. 版本修正（`src/glb.mjs`）
-3ds Max 的 Khronos glTF 导出器会写 `asset.version: "2.1"`。**这不是合法 glTF 值**（规范只允许 `2.0`），
-glTF-Transform / three.GLTFLoader 会直接抛 `Unsupported glTF version` 拒绝加载。
-工具在进解析器之前按字节改写 JSON chunk，二进制不动。
+| | 体积 | 用时 | 说明 |
+|---|---|---|---|
+| 原始（3ds Max 导出，自带低压缩 Draco） | 208.24 MB | — | 25.46 字节/顶点 |
+| 浏览器（`web/`，meshopt FILTER） | 112.97 MB　**−45.7%** | ~37 s | 顶点保持 Float32，材质零改动 |
+| 命令行 / 本地 Draco（`src/`，edgebreaker） | 60.67 MB　**−70.9%** | 17.3 s | 量化 14–16 bit，需 Node |
 
-> 所以"模型打不开"十有八九不是模型坏了，是这个字段。
+两条路径的属性都是零丢失：
 
-### 2. Draco 重编码（`src/compress.mjs`）
-glTF-Transform + draco3dgltf，**只做几何重编码**，不做 weld / simplify / prune / join ——
-任何拓扑或图元结构改动都会破坏 BIM 构件一一对应关系。
-
-位深选择上有个判断：源文件若已含 Draco，再压就是**二次编码**（不可逆的二代有损），
-所以工具会自动把 `balance(14bit)` 升到 `high(16bit)`：16bit 对本模型（单件最大 59357 单位）误差上限 0.91 mm，
-实测最大偏差 0.199 单位，不值得为省 5% 体积冒风险。
-
-### 3. 属性校验（`src/verify.mjs`）
-19 项的闸门，任何一项挂红都不该交付：
-
-- 节点数 / 网格数 / 图元数 / 材质数
-- **节点名称逐项一致、父子层级一致**（构件对得上号）
-- **节点 extras 逐条指纹一致**（BIM 属性零丢失，本模型 795,727 条）
-- 变换等价、材质数值等价、每图元材质绑定、三角面数、扩展列表
-
-两个判据上的工程决定：
-
-- **材质用数值比，不用 JSON 文本比**：`1` 和 `1.0` 是不同的字符串，但是同一个数。
-- **变换用"角点位移"比，不用逐元素比矩阵**：逐元素在 157 米量级的平移上会把 float32 四元数
-  往返噪声（1.5e-5 单位）误判成失败；角点位移能真实反映"构件会不会错位"，
-  也能抓住剪切（shear）这种 TRS 表达不出来的矩阵。
-
-### 4. 几何保真（`src/verify.mjs: compareGeometry`）
-解码两侧、抽样图元逐顶点算最近邻距离，报最大/平均偏差与三角面总面积差。这是唯一能证明
-"看起来没变"的硬指标，默认开启（`--no-geo` 可关）。
-
-### 5. 传输层预压缩（`src/precompress.mjs`）
-brotli q11 + gzip 兜底。**必须构建期做**：60 MB 压一次 47 s，放请求期会拖死服务器。
-实测这个模型：63.20 MB → br **5.14 MB**（−91.9%）/ gz 11.18 MB（−82.3%）。
-
-### 6. viewer（`viewer/`）
-读 `manifest.json` 决定画什么、怎么画，所以换楼层不用改前端：
-
-- `viewer/bim-batch.js` —— 把上万独立 Mesh 收成按材质分组的 `BatchedMesh`
-  （12209 draw call → 29），保留逐构件剔除 / 显隐 / 拾取
-- `viewer/index.html` —— 点击构件查 BIM 属性，HUD 实时显示 draw call 与 FPS
-- `viewer/server.cjs` —— 本地服务器 + **传输层 brotli 的参考实现**（含 `Vary: Accept-Encoding`、
-  `model/gltf-binary`、`application/wasm` 三处易错点）
+```
+节点        12,244 → 12,244
+图元        12,209 → 12,209
+材质        53 → 53（逐份一致）
+属性条目    795,727 → 795,727
+三角面      7,937,261 → 7,937,261
+渲染        29 draw call（原 12,209）
+```
 
 ---
 
-## 目录
+## 几个绕不开的结论
+
+1. **浏览器里做不了 Draco 编码。** npm 的 `draco3d` 只有 Node 版 glue；
+   three.js 自带的 asm.js 编码器在 Chrome 里一初始化就 `Target crashed`。
+   所以前端走 meshopt（`EXT_meshopt_compression`），Draco 走命令行 / 本地工具。
+2. **不要用 gltf-transform 的 `meshopt()` 封装。** 它内部强制 `quantize()`，
+   会把 `KHR_materials_volume.thicknessFactor` 按节点缩放改写（0.2 → 0.00024），
+   共用材质还会被克隆成多份。这里是 `reorder()` + 手动挂 FILTER 扩展。
+3. **已经压到极限的文件不再压。** 量化解回 float32 再编码必然膨胀（实测 63.63 → 115.34 MB）。
+   判据是**每顶点几何字节数**，不是「有没有 Draco 扩展」——3ds Max 原始导出本身就带 Draco，
+   只是压缩设置低。低于 8 B/顶点就判定为够了。
+4. **3ds Max 的 GLB 没有层级。** 12,244 个节点全在根上、最大深度 0，所以树是按 BIM 属性合成的。
+5. **`asset.version` 常写成 `2.1`**，而规范只允许 `2.0`，three.js / glTF-Transform 都会直接拒载。
+   前端和 CLI 都会在字节层改成 `2.0`（导出侧后面选 2.0 就不需要这步了）。
+
+---
+
+## 目录结构
 
 ```
 bimpack/
-├── src/
-│   ├── cli.mjs          命令分发与编排
-│   ├── glb.mjs          GLB 字节级读写 / 版本修正
-│   ├── inspect.mjs      体检
-│   ├── compress.mjs     Draco 编码（含 high/balance/small 预设）
-│   ├── verify.mjs       JSON 层 + 几何层比对
-│   ├── precompress.mjs  .br / .gz
-│   └── report.mjs       markdown 报告
-├── viewer/              三个文件：批处理模块 / 页面 / 服务器
-├── test/batch.test.mjs  无头单测（18 项，不需 WebGL）
-├── out/<楼层>/           每层一个目录，互不覆盖
-└── bim.config.json
+├── web/                     纯前端应用（主入口）
+│   ├── index.html
+│   ├── vite.config.js       base:'./'，产物可放任意子路径
+│   ├── public/draco/        Draco 解码器（asm.js，只用来读 Draco 源文件）
+│   ├── src/
+│   │   ├── main.js          页面编排：拖入 → 体检 → 压缩 → 渲染 → 树/属性联动 → 下载
+│   │   ├── core/            GLB 字节读写 / 体检 / meshopt 压缩 / 19 项校验
+│   │   └── viewer/          相机与取景 / BatchedMesh 批处理 / 层级树
+│   └── test/                e2e、压缩验收、取景断言（真实 Chrome）
+├── src/                     命令行批处理
+│   ├── cli.mjs              inspect / build / verify
+│   ├── glb.mjs, inspect.mjs
+│   ├── compress.mjs         Draco 编码（gltf-transform + draco3dgltf）
+│   ├── verify.mjs           属性 / 材质 / 几何比对
+│   ├── precompress.mjs      .br / .gz 预压缩
+│   └── report.mjs           report.md 生成
+├── test/                    CLI 批处理回归
+├── bim.config.json
+└── package.json
+```
+
+## 测试
+
+```bash
+# 前端（需要先 npm run dev 起服务，用系统 Chrome，不下载浏览器）
+cd web
+node test/e2e.mjs "路径/模型.glb"                 # 全流程 + 截图
+node test/e2e.mjs "路径/模型.glb" --no-process    # 只看不压
+node test/acceptance.mjs "路径/模型.glb"          # 压缩质量逐项校验
+node test/verify-view.mjs "路径/模型.glb"         # 取景是否裁切 / 树 / 面板 / 单击不动相机
+
+# 命令行
+npm test
 ```
 
 ---
 
-## 每次新楼层的标准动作
+## 不在本仓库里的东西
 
-1. `node src/cli.mjs inspect <新文件>` —— 先看体检，确认版本是不是又写成 `2.1`、材质分组多少、有没有贴图
-2. `node src/cli.mjs build <新文件>` —— 跑全流程
-3. 看 `out/<楼层>/report.md` 的第三、四节：属性校验是否全 PASS、几何偏差是否可接受
-4. `node src/cli.mjs serve` —— 浏览器里看 FPS 和拾取是否正常
-5. 上线：把 `out/<楼层>/` 整个目录传到服务器，按 `report.md` 里的 nginx 配置片段发 `.br`
-
-> **有贴图的楼层**（精装、幕墙）：体检会提示 `存在贴图但只有 N 个图元带 UV`。
-> 此时 `manifest.hasTextures = true`，viewer 会自动保留 uv 并给缺失的补空属性，
-> 不需要改代码；但**别**手动加 `--preset small`，UV 精度会掉。
-
----
-
-## 已知限制
-
-- **必须源文件几何是三角形**：`mode: 4`。点线、条带会被跳过（体检里 `skipped` 会显示）。
-- **必须源文件带 `POSITION`**：没有的话无法批处理。
-- 变换的 `matrix` 会被改写成 `translation/rotation/scale`（glTF 规范等价写法），
-  角点位移在容差内即通过；若某天出现**真含剪切**的矩阵，校验会报 FAIL 并在报告里点名节点。
-- 顶点数会比源文件多 2~3%：Draco 对非流形边会拆点（位置完全相同），不影响外形。
-- viewer 的 three.js 走 CDN importmap，只适合本地看效果；生成环境请换成自己的打包产物，
-  并把 Draco 解码器自托管（`viewer/index.html` 里的 `dracoDecoderPath`）。
-
----
-
-## 与旧脚本的关系
-
-`glb_draco/`、`threejs_bim/` 是这套东西的前身（一次性 Python/JS 脚本）。
-功能已被 `bimpack/` 全部覆盖且做了通用化，可以删掉；留着也不影响运行。
+**本地 Draco 极限压缩小工具**（双击 `start.cmd`、拖放、三档位深、自动跑 19 项校验）
+放在本机 `local-tools/draco-tool/`，不随仓库走。它复用 `src/` 的压缩与校验模块，
+所以两个文件夹保持同级即可。本文档只描述仓库内的 `web/` 与 `src/`。

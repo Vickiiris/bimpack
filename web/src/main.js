@@ -235,7 +235,7 @@ $('btnGrid').onclick = () => {
 // 压过头的文件不再让压：量化解回 float32 再编码必然变大（实测 63.63 → 115.34 MB）。
 // 要更小只能回到原始导出重压，或换更低位深 —— 那是本地 Draco 工具的活。
 const LOCAL_TOOL_HINT =
-  '本地 Draco 工具：bimpack\\draco-tool\\ 目录里双击 start.cmd，拖入 3ds Max 导出的原始 .glb 即可。';
+  'Draco 极限压缩请用本机的本地工具（不在本仓库）：local-tools\\draco-tool\\ 双击 start.cmd，拖入 3ds Max 导出的原始 .glb 即可。';
 
 /**
  * 「已经压到极限，不该再压」的判据。

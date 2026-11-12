@@ -1,7 +1,7 @@
 {
   "name": "bimpack",
   "version": "1.0.0",
-  "description": "BIM GLB 处理工具链：版本修正 → Draco 压缩 → 属性/几何校验 → 传输层预压缩 → three.js viewer",
+  "description": "BIM GLB 处理工具链：前端预览/压缩（web/）+ 命令行 Draco 压缩与属性校验（src/）",
   "type": "module",
   "bin": {
     "bimpack": "src/cli.mjs"
@@ -10,11 +10,10 @@
     "inspect": "node src/cli.mjs inspect",
     "build": "node src/cli.mjs build",
     "verify": "node src/cli.mjs verify",
-    "serve": "node src/cli.mjs serve",
     "test": "node test/batch.test.mjs",
-    "start": "node start.mjs",
-    "stop": "node stop.mjs --scan",
-    "restart": "node stop.mjs --scan && node start.mjs"
+    "dev": "npm --prefix web run dev",
+    "build:web": "npm --prefix web run build",
+    "preview:web": "npm --prefix web run preview"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.5.1",

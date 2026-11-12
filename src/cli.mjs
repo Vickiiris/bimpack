@@ -5,7 +5,6 @@
  *   node src/cli.mjs inspect <file.glb>            体检（秒级，不解码几何）
  *   node src/cli.mjs build   <file.glb> [选项]     全流程：修版本 → Draco → 校验 → 预压缩 → 报告
  *   node src/cli.mjs verify  <a.glb> <b.glb>       只比两个文件（属性 + 可选几何）
- *   node src/cli.mjs serve   [--run <名字>]        起 viewer 演示
  *
  * build 选项：
  *   --preset high|balance|small   量化位深预设（默认 balance；源已是 Draco 时自动升为 high）
@@ -273,7 +272,7 @@ async function cmdBuild(args) {
     console.log(C.red(`\n✗ 属性校验未通过，此文件不应交付。\n`));
     process.exitCode = 2;
   } else {
-    console.log(C.green(`\n✓ 完成。viewer 预览： node src/cli.mjs serve --run ${slug}\n`));
+    console.log(C.green(`\n✓ 完成。产物在 ${outDir}，可直接拖进 web/ 前端预览\n`));
   }
   return { outDir, verify, geo, manifest };
 }
@@ -304,15 +303,6 @@ async function cmdVerify(args) {
   if (!vr.pass) process.exitCode = 2;
 }
 
-// ---------- 命令：serve ----------
-function cmdServe(args) {
-  const env = { ...process.env, PORT: String(args.port || 8080) };
-  if (args.run) env.RUN = String(args.run);
-  const script = path.join(ROOT, 'viewer', 'server.cjs');
-  const r = spawnSync(process.execPath, [script], { stdio: 'inherit', env });
-  process.exit(r.status ?? 0);
-}
-
 function fail(msg) {
   console.error(C.red(msg));
   process.exitCode = 1;
@@ -328,7 +318,6 @@ switch (cmd) {
   case 'inspect': cmdInspect(args); break;
   case 'build': await cmdBuild(args); break;
   case 'verify': await cmdVerify(args); break;
-  case 'serve': cmdServe(args); break;
   default:
     console.log(`
 ${C.bold('bimpack')} —— BIM GLB 处理工具链
@@ -336,7 +325,6 @@ ${C.bold('bimpack')} —— BIM GLB 处理工具链
   ${C.cyan('inspect')} <file.glb>            体检（秒级，不解码几何）
   ${C.cyan('build')}   <file.glb> [选项]     修版本 → Draco → 属性校验 → 几何保真 → 预压缩 → 报告
   ${C.cyan('verify')}  <a.glb> <b.glb>       只比两个文件
-  ${C.cyan('serve')}   [--run 名字]          起 viewer
 
 build 选项：
   --preset high|balance|small    位深预设（默认 balance；源已是 Draco 时自动 high）
@@ -344,6 +332,5 @@ build 选项：
   --name <slug>                  输出目录名
   --no-geo                       跳过解码级几何比对
   --no-gzip                      不生成 .gz
-  --port <n>                     serve 端口（默认 8080）
 `);
 }
