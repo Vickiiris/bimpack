@@ -3,7 +3,10 @@
  *
  * 两条路径刻意分开：
  *   「直接查看」：只修 asset.version，不动几何，秒开；
- *   「压缩处理」：Draco 重编码 + 19 项属性校验，慢但能出交付级文件。
+ *   「压缩处理」：meshopt 重编码 + 19 项属性校验，慢但能出交付级文件。
+ *
+ * 交互约定（按使用反馈定的）：
+ *   单击构件 = 高亮 + 出属性，**相机不动**；只有双击（或点「适应视图」）才移动相机。
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -15,15 +18,13 @@ import { inspect as inspectBytes, compressGeometry, getIO, heapMB } from './core
 import { compareJSON, compareGeometry } from './core/verify.js';
 import { createViewer } from './viewer/scene.js';
 import { batchGLTFScene, setHighlight, unionBox } from './viewer/bim-batch.js';
-import { createTree } from './viewer/tree.js';
+import { createTree, GROUP_MODES } from './viewer/tree.js';
 
 const $ = (id) => document.getElementById(id);
 const BASE = import.meta.env.BASE_URL || './';
 
 const mb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : (n / 1024).toFixed(1) + ' KB');
 const num = (n) => Number(n || 0).toLocaleString('en-US');
-
-$('layout').classList.add('no-left', 'no-right');
 
 const state = {
   fileName: '',
@@ -35,7 +36,40 @@ const state = {
   currentBytes: null,  // 当前渲染的是哪份字节（用于下载）
   processed: null,     // 处理结果 { bytes, params, verify }
   busy: false,
+  loadedOnce: false,
 };
+
+// ---------- 面板开关 ----------
+// 三栏布局靠 #layout 上的 no-left / no-right 两个类控制，
+// 顶栏按钮、面板右上角 ×、快捷键 1/2 都走这里，避免状态两处维护。
+const layout = { left: false, right: false };
+
+function applyLayout() {
+  $('panelLeft').hidden = !layout.left;
+  $('panelRight').hidden = !layout.right;
+  const el = $('layout');
+  el.classList.toggle('no-left', !layout.left);
+  el.classList.toggle('no-right', !layout.right);
+  $('btnTree').classList.toggle('active', layout.left);
+  $('btnProps').classList.toggle('active', layout.right);
+  // 视口宽度变了：让 renderer/camera 跟上；没被用户动过相机会自动重新取景
+  requestAnimationFrame(() => viewer.resize());
+}
+
+function setPanel(which, on) {
+  if (which === 'left') layout.left = on; else layout.right = on;
+  applyLayout();
+}
+
+function togglePanel(which) {
+  if (!state.loadedOnce) return;
+  setPanel(which, !(which === 'left' ? layout.left : layout.right));
+}
+
+$('btnTree').onclick = () => togglePanel('left');
+$('btnProps').onclick = () => togglePanel('right');
+$('btnCloseLeft').onclick = () => setPanel('left', false);
+$('btnCloseRight').onclick = () => setPanel('right', false);
 
 // ---------- 视口 ----------
 const viewer = createViewer($('canvas'));
@@ -50,17 +84,31 @@ const loader = new GLTFLoader().setDRACOLoader(dracoLoader).setMeshoptDecoder(Me
 
 // ---------- 层级树 ----------
 const tree = createTree($('tree'), {
-  onSelect: (node) => {
-    const recs = collectRecs(node);
-    if (!recs.length) {
-      // 纯分组：只飞相机过去
-      if (node.obj) viewer.focusOn(new THREE.Box3().setFromObject(node.obj));
-      showProps(null, node);
-      return;
-    }
-    selectRecs(recs, node);
-  },
+  onSelect: (node) => selectNode(node, { zoom: false }),
+  onZoom: (node) => selectNode(node, { zoom: true }),
 });
+
+// 分组方式下拉
+for (const [id, m] of Object.entries(GROUP_MODES)) {
+  const opt = document.createElement('option');
+  opt.value = id;
+  opt.textContent = m.label;
+  $('treeGroup').appendChild(opt);
+}
+$('treeGroup').value = tree.mode;
+$('treeGroup').onchange = (e) => {
+  if (!state.sceneRoot || !state.batched) return;
+  const res = tree.setMode(e.target.value);
+  if (res) updateTreeCount(res);
+  // 树重建后选中态丢了，重新按当前选中回填
+  if (lastRec?.object) tree.reveal(lastRec.object);
+};
+
+function updateTreeCount(res) {
+  const el = $('treeCount');
+  el.textContent = num(res.total);
+  el.title = `${num(res.total)} 个构件${res.groups ? ` · ${res.groups} 个分组` : ''}`;
+}
 
 function collectRecs(node) {
   if (node.recs?.length) return node.recs;
@@ -77,23 +125,34 @@ function collectRecs(node) {
 let selectedRecs = [];
 let lastRec = null;
 
-function selectRecs(recs, node) {
+/**
+ * @param {object} node 树节点
+ * @param {{zoom:boolean}} opts 只有 zoom=true 才移动相机
+ */
+function selectNode(node, opts = {}) {
+  const recs = collectRecs(node);
+
   for (const r of selectedRecs) setHighlight(r, false);
   selectedRecs = recs;
   for (const r of recs) setHighlight(r, true);
   lastRec = recs[0] || null;
 
-  if (recs.length) {
-    const box = unionBox(recs);
-    if (!box.isEmpty()) viewer.focusOn(box);
-    if (node) tree.reveal(node.obj);
-    else if (lastRec?.object) tree.reveal(lastRec.object);
+  if (opts.zoom) {
+    const box = recs.length ? unionBox(recs) : (node.obj ? new THREE.Box3().setFromObject(node.obj) : null);
+    if (box && !box.isEmpty()) viewer.focusOn(box);
   }
+
   showProps(recs, node);
 }
 
+/** 3D 里点选：只高亮 + 出属性 + 在树里定位，相机保持不动 */
 function selectRec(rec) {
-  selectRecs([rec], null);
+  for (const r of selectedRecs) setHighlight(r, false);
+  selectedRecs = [rec];
+  setHighlight(rec, true);
+  lastRec = rec;
+  if (rec.object) tree.reveal(rec.object);
+  showProps([rec], null);
 }
 
 // ---------- 属性面板 ----------
@@ -104,8 +163,9 @@ function showProps(recs, node) {
     box.innerHTML =
       `<div class="prop-section"><div class="prop-section-title">分组</div>` +
       `<div class="prop-row"><span class="prop-key">名称</span><span class="prop-val">${esc(nm)}</span></div>` +
-      `<div class="prop-row"><span class="prop-key">子节点</span><span class="prop-val num">${node?.children?.length ?? 0}</span></div>` +
-      `</div>`;
+      `<div class="prop-row"><span class="prop-key">构件数</span><span class="prop-val num">${num(node?.count ?? 0)}</span></div>` +
+      `</div>` +
+      `<div class="empty">点选组内构件查看 BIM 属性</div>`;
     $('propCount').textContent = '';
     return;
   }
@@ -119,7 +179,7 @@ function showProps(recs, node) {
     ['构件名称', rec.name],
     ['顶点数', num(v)],
     ['材质', rec.batch.material?.name || '(默认)'],
-    ['选中数量', recs.length > 1 ? `${recs.length} 个` : '1 个'],
+    ['选中数量', recs.length > 1 ? `${num(recs.length)} 个` : '1 个'],
   ];
 
   let html = '<div class="prop-section"><div class="prop-section-title">基本信息</div>';
@@ -159,6 +219,16 @@ viewer.onClick((x, y) => {
 viewer.onFrame((fps) => {
   $('hudFps').textContent = fps;
 });
+
+// ---------- 视图工具 ----------
+$('btnFit').onclick = () => {
+  if (viewer.fit()) toast('已适应视图');
+};
+$('btnTop').onclick = () => viewer.topView();
+$('btnGrid').onclick = () => {
+  const on = viewer.setGrid(!viewer.gridVisible);
+  $('btnGrid').classList.toggle('on', on);
+};
 
 // ---------- 进度 ----------
 function progress(title, pct, log) {
@@ -253,7 +323,13 @@ async function loadFile(file) {
 
     progressDone();
     updateTopbar(file.name, file.size);
-    toast('已加载，可直接查看或点「压缩处理」', 'ok');
+    const flat = state.info.hierarchyMaxDepth === 0;
+    toast(
+      flat
+        ? `已加载。源文件节点是平铺的（无层级），已按 BIM 属性合成层级树`
+        : '已加载，可直接查看或点「压缩处理」',
+      'ok'
+    );
   } catch (err) {
     console.error(err);
     progressDone(0);
@@ -261,6 +337,28 @@ async function loadFile(file) {
   } finally {
     state.busy = false;
   }
+}
+
+/**
+ * GLTFLoader 会按 PropertyBinding 规则改写节点名（空格→下划线、去掉方括号等），
+ * 层级树上就和 3ds Max 对不上了。用 parser.associations 找回 GLB 里的原始名。
+ */
+function makeNameResolver(gltf) {
+  const assoc = gltf.parser?.associations;
+  const json = gltf.parser?.json;
+  if (!assoc || !json?.nodes) return null;
+  const cache = new WeakMap();
+  return (obj) => {
+    if (cache.has(obj)) return cache.get(obj);
+    let name;
+    const a = assoc.get(obj);
+    if (a && a.nodes !== undefined) {
+      const raw = json.nodes[a.nodes]?.name;
+      if (raw) name = String(raw).replace(/\s+/g, ' ').trim();
+    }
+    cache.set(obj, name);
+    return name;
+  };
 }
 
 /** 把字节渲染出来：GLTFLoader → 批处理 → 挂到场景 → 建树 */
@@ -278,35 +376,44 @@ async function renderBytes(bytes, baseName) {
 
   progress(null, 46, `节点 ${num(gltf.scene.children.length)} 个根 · 开始批处理…`);
 
+  const nameOf = makeNameResolver(gltf);
   const batched = await batchGLTFScene(gltf.scene, {
     onProgress: ({ done, total, phase }) => {
       if (phase === 'batch') progress(null, 46 + (done / Math.max(1, total)) * 44);
     },
     chunk: 200,
+    nameOf,
   });
   state.batched = batched;
 
-  viewer.setModel(batched.group);
+  // 先把面板摆好再取景：面板开合会改宽高比，早了会按旧视口算距离
+  if (!state.loadedOnce) {
+    layout.left = true;
+    layout.right = true;
+  }
+  applyLayout();
+  state.loadedOnce = true;
+
+  viewer.setModel(batched.group, batched.box);
 
   // 层级树用「原始 scene 结构」，批处理只是把几何搬进 BatchedMesh，Object3D 仍在
-  const { total } = tree.setModel(gltf.scene, batched.objectToRecs);
+  const res = tree.setModel(gltf.scene, batched.objectToRecs);
+  updateTreeCount(res);
 
   $('dropzone').classList.add('hidden');
-  $('panelLeft').hidden = false;
-  $('panelRight').hidden = false;
   $('hud').hidden = false;
-  $('layout').classList.remove('no-left', 'no-right');
+  $('viewTools').hidden = false;
+  $('btnTree').hidden = false;
+  $('btnProps').hidden = false;
   $('btnProcess').hidden = false;
   $('btnDownload').hidden = false;
 
   updateHud(batched, gltf);
-  $('treeCount').textContent = `${num(total)} 节点`;
 
   progress(null, 92, `批处理完成：${batched.stats.meshes} 个几何 → ${batched.stats.drawCalls} 个 draw call（${batched.stats.buildMs} ms）`);
-
 }
 
-function updateHud(batched, gltf) {
+function updateHud(batched) {
   const info = state.info;
   $('hudDraw').textContent = num(batched.stats.drawCalls);
   $('hudTri').textContent = num(info?.triangles || 0);
@@ -352,9 +459,7 @@ $('btnProcess').onclick = async () => {
 
   const t0 = performance.now();
   try {
-    const info = state.info;
     progress('准备编码器…', 4, '模式：reorder + FILTER（不动顶点精度、不动材质）');
-    const heapStart = heapMB();
 
     const tEnc = performance.now();
     const { bytes: out, params } = await compressGeometry(state.fixedBytes, {
@@ -431,20 +536,34 @@ $('treeSearch').oninput = (e) => {
   searchTimer = setTimeout(() => {
     if (!q.trim()) {
       if (state.sceneRoot && state.batched) {
-        const { total } = tree.setModel(state.sceneRoot, state.batched.objectToRecs);
-        $('treeCount').textContent = `${num(total)} 节点`;
+        updateTreeCount(tree.setModel(state.sceneRoot, state.batched.objectToRecs));
       }
       return;
     }
     const hits = tree.search(q);
-    if (hits) $('treeCount').textContent = `${num(hits.length)} 个匹配`;
+    if (hits) {
+      const el = $('treeCount');
+      el.textContent = num(hits.length);
+      el.title = `${num(hits.length)} 个匹配`;
+    }
   }, 180);
 };
 
-// 键盘：Esc 取消选中
+// ---------- 快捷键 ----------
 window.addEventListener('keydown', (e) => {
+  const tag = e.target?.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
   if (e.key === 'Escape') {
     for (const r of selectedRecs) setHighlight(r, false);
     selectedRecs = [];
+    return;
   }
+  if (!state.loadedOnce) return;
+  if (e.key === '1') togglePanel('left');
+  if (e.key === '2') togglePanel('right');
+  if (e.key === 'f' || e.key === 'F') viewer.fit();
 });
+
+// 便于自动化测试/排查：控制台里可以直接拿到核心对象
+window.__bim = { viewer, state, layout, tree };

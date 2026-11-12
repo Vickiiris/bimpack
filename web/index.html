@@ -25,6 +25,8 @@
   </div>
 
   <div class="actions">
+    <button class="btn ghost" id="btnTree" title="显示 / 隐藏左侧层级树（快捷键 1）" hidden>层级树</button>
+    <button class="btn ghost" id="btnProps" title="显示 / 隐藏右侧构件属性（快捷键 2）" hidden>属性</button>
     <button class="btn ghost" id="btnOpen">打开文件</button>
     <button class="btn ghost" id="btnProcess" hidden>压缩处理</button>
     <button class="btn primary" id="btnDownload" hidden>下载 GLB</button>
@@ -32,13 +34,17 @@
 </header>
 
 <!-- 主体 -->
-<main class="layout" id="layout">
+<main class="layout no-left no-right" id="layout">
 
   <!-- 左：层级树 -->
   <aside class="panel left" id="panelLeft" hidden>
     <div class="panel-head">
       <span>模型层级</span>
-      <span class="count" id="treeCount"></span>
+      <span class="ph-right">
+        <select class="ph-select" id="treeGroup" title="分组方式"></select>
+        <span class="count" id="treeCount"></span>
+        <button class="panel-x" id="btnCloseLeft" title="收起面板">×</button>
+      </span>
     </div>
     <div class="tree-search">
       <input type="search" id="treeSearch" placeholder="搜索构件名称…" autocomplete="off" />
@@ -77,13 +83,23 @@
       <div class="row"><span>FPS</span><b id="hudFps"></b></div>
       <div class="row"><span>批处理</span><b id="hudBatch"></b></div>
     </div>
+
+    <!-- 视图工具 -->
+    <div class="view-tools" id="viewTools" hidden>
+      <button class="vt-btn" id="btnFit" title="适应视图，看全整个模型（F）">适应视图</button>
+      <button class="vt-btn" id="btnTop" title="俯视">俯视</button>
+      <button class="vt-btn" id="btnGrid" title="地面网格">网格</button>
+    </div>
   </section>
 
   <!-- 右：属性 -->
   <aside class="panel right" id="panelRight" hidden>
     <div class="panel-head">
       <span>构件属性</span>
-      <span class="count" id="propCount"></span>
+      <span class="ph-right">
+        <span class="count" id="propCount"></span>
+        <button class="panel-x" id="btnCloseRight" title="收起面板">×</button>
+      </span>
     </div>
     <div class="prop-body" id="props">
       <div class="empty">在模型或左侧树里点选一个构件</div>

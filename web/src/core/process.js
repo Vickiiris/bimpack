@@ -61,6 +61,24 @@ export function inspect(bytes) {
     propEntries += Object.keys(e).length;
   }
   const req = json.extensionsRequired || [];
+  const nodes = json.nodes || [];
+
+  // 层级深度：3ds Max 的导出器经常把节点全拍平到根上（本例 12244 个根、零子节点），
+  // 层级树就得靠属性合成。这里先量出来，好决定提示语和默认视图。
+  const sceneDef = json.scenes?.[json.scene ?? 0];
+  const roots = sceneDef?.nodes || nodes.map((_, i) => i);
+  let maxDepth = 0;
+  const stack = roots.map((i) => [i, 0]);
+  const seen = new Set();
+  while (stack.length) {
+    const [i, d] = stack.pop();
+    const n = nodes[i];
+    if (!n || seen.has(i)) continue;
+    seen.add(i);
+    if (d > maxDepth) maxDepth = d;
+    for (const c of n.children || []) stack.push([c, d + 1]);
+  }
+
   return {
     version,
     gltfVersion: json.asset?.version ?? '(缺失)',
@@ -68,7 +86,10 @@ export function inspect(bytes) {
     total,
     jsonLength,
     binLength,
-    nodes: (json.nodes || []).length,
+    nodes: nodes.length,
+    rootNodes: roots.length,
+    hierarchyMaxDepth: maxDepth,
+    flatHierarchy: maxDepth === 0,
     meshes: (json.meshes || []).length,
     primitives: prims.length,
     materials: (json.materials || []).length,

@@ -127,9 +127,12 @@ function normalizeGeometry(src, matrixWorld, cloneIt, keepVertexAttrs) {
  * @param {(p:{done:number,total:number,phase:string})=>void} opts.onProgress
  * @param {string[]} opts.keepAttrs  额外保留的顶点属性
  * @param {number} opts.chunk        每处理多少几何让出一次主线程
+ * @param {(o:THREE.Object3D)=>string|undefined} opts.nameOf  取 GLB 里的原始节点名
+ *        （GLTFLoader 会按 PropertyBinding 规则把名字里的空格/括号改写成下划线，
+ *         这里用 parser.associations 找回原文，层级树上看到的就和 3ds Max 一致）
  */
 export async function batchGLTFScene(scene, opts = {}) {
-  const { onProgress = () => {}, keepAttrs = [], chunk = 250 } = opts;
+  const { onProgress = () => {}, keepAttrs = [], chunk = 250, nameOf = null } = opts;
   const keepVertexAttrs = ['position', 'normal', ...keepAttrs];
 
   scene.updateMatrixWorld(true);
@@ -145,6 +148,8 @@ export async function batchGLTFScene(scene, opts = {}) {
   const trash = [];
   /** Object3D → 该对象对应的实例记录（树点选用） */
   const objectToRecs = new Map();
+  /** 世界包围盒：顺手累出来，比事后 setFromObject 去猜 BatchedMesh 的盒可靠 */
+  const modelBox = new THREE.Box3();
   let done = 0;
 
   for (const { material, items } of groups.values()) {
@@ -167,6 +172,7 @@ export async function batchGLTFScene(scene, opts = {}) {
       const shared = (geoUse.get(src.uuid) || 1) > 1;
       const geo = normalizeGeometry(src, mesh.matrixWorld, shared, keepVertexAttrs);
       const box = geo.boundingBox ? geo.boundingBox.clone() : null;
+      if (box) modelBox.union(box);
       if (shared) trash.push(geo);
 
       const geometryId = batch.addGeometry(geo);
@@ -179,7 +185,7 @@ export async function batchGLTFScene(scene, opts = {}) {
         instanceId,
         localIndex,
         object: mesh,
-        name: mesh.name || mesh.parent?.name || '(未命名)',
+        name: nameOf?.(mesh) || mesh.name || mesh.parent?.name || '(未命名)',
         box,
         props: (mesh.userData && Object.keys(mesh.userData).length)
           ? mesh.userData
@@ -217,6 +223,7 @@ export async function batchGLTFScene(scene, opts = {}) {
     group,
     batches,
     objectToRecs,
+    box: modelBox,
     stats: {
       drawCalls: batches.length,
       meshes: total,
