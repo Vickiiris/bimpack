@@ -1,0 +1,14 @@
+{
+  "outDir": "out",
+  "preset": "balance",
+  "geoSamples": 350,
+  "precompress": {
+    "brotli": { "quality": 11, "lgwin": 24 },
+    "gzip": true,
+    "gzipLevel": 9
+  },
+  "viewer": {
+    "dropUVWhenNoTextures": true,
+    "dracoDecoderPath": "https://www.gstatic.com/draco/versioned/decoders/1.5.7/"
+  }
+}

@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+
+# 处理产物与上传的原始模型（体积大，不随代码走）
+out/
+inbox/
+test/fixture.glb
+web/public/*.glb
+web/test/shot-*.png
+
+# 运行时状态
+.server.json
+
+# 构建产物
+web/dist/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+*.log

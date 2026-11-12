@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>BIM Viewer · BatchedMesh</title>
+<style>
+  :root { --bg:#eef1f5; --panel:rgba(255,255,255,.93); --line:#d6dbe3; --text:#1c2430; --muted:#6b7688; --accent:#2b6cff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text);
+              font:13px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  #app { position:fixed; inset:0; }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+           backdrop-filter:blur(8px); box-shadow:0 6px 24px rgba(20,30,50,.10); }
+  #hud { top:14px; left:14px; padding:12px 14px; min-width:264px; }
+  #hud h1 { margin:0 0 2px; font-size:13px; font-weight:650; }
+  #hud .sub { color:var(--muted); font-size:11px; margin-bottom:9px; }
+  #hud .row { display:flex; justify-content:space-between; gap:18px; color:var(--muted); }
+  #hud .row b { color:var(--text); font-variant-numeric:tabular-nums; font-weight:600; }
+  #hud .good { color:#0a8f4d; } #hud .warn { color:#c2410c; }
+  #props { top:14px; right:14px; width:330px; max-height:calc(100vh - 28px); display:none; flex-direction:column; }
+  #props header { padding:11px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+  #props header span { flex:1; font-weight:650; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #props .body { overflow:auto; padding:6px 14px 12px; }
+  #props .kv { display:grid; grid-template-columns:112px 1fr; gap:2px 10px; padding:3px 0; border-bottom:1px dashed #eef1f6; }
+  #props .kv i { color:var(--muted); font-style:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #props .kv b { font-weight:500; word-break:break-all; }
+  #props button { border:1px solid var(--line); background:#fff; border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
+  #props button:hover { border-color:var(--accent); color:var(--accent); }
+  #tip { bottom:14px; left:14px; padding:9px 13px; color:var(--muted); }
+  #tip b { color:var(--text); }
+  #boot { position:fixed; inset:0; display:grid; place-items:center; background:var(--bg); z-index:9; }
+  #boot .bar { width:280px; height:4px; background:#dde2ea; border-radius:3px; overflow:hidden; margin:12px auto 0; }
+  #boot .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
+  #boot p { margin:6px 0 0; color:var(--muted); font-size:12px; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud" class="panel">
+  <h1 id="title">BIM</h1>
+  <div class="sub" id="sub">—</div>
+  <div class="row"><span>加载模式</span><b id="mode">—</b></div>
+  <div class="row"><span>构件数</span><b id="nMesh">—</b></div>
+  <div class="row"><span>draw calls / 帧</span><b id="nCall">—</b></div>
+  <div class="row"><span>三角面 / 帧</span><b id="nTri">—</b></div>
+  <div class="row"><span>FPS</span><b id="fps">—</b></div>
+  <div class="row"><span>批处理耗时</span><b id="buildT">—</b></div>
+  <div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line)">
+    <a href="/" style="color:#2b6cff;text-decoration:none;font-size:12px">← 返回上传页</a>
+  </div>
+</div>
+
+<div id="props" class="panel">
+  <header><span id="pName">构件属性</span><button id="btnHide">隐藏</button><button id="btnClose">×</button></header>
+  <div class="body" id="pBody"></div>
+</div>
+
+<div id="tip" class="panel">左键拖拽旋转 · 滚轮缩放 · <b>单击构件</b>查看 BIM 属性</div>
+
+<div id="boot"><div style="text-align:center">
+  <div style="font-weight:650" id="bootTitle">正在加载…</div>
+  <div class="bar"><i id="bootBar"></i></div>
+  <p id="bootMsg">读取 manifest</p>
+</div></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { batchGLTFScene, setHighlight, setVisible } from './bim-batch.js';
+
+const QS = new URLSearchParams(location.search);
+const RAW = QS.has('raw');                                     // ?raw=1 关闭批处理做对比
+const RUN = QS.get('run');                                     // ?run=<楼层> 指定看哪一层
+const Q = RUN ? '?run=' + encodeURIComponent(RUN) : '';
+const $ = (id) => document.getElementById(id);
+const boot = (p, msg) => { $('bootBar').style.width = (p * 100).toFixed(0) + '%'; if (msg) $('bootMsg').textContent = msg; };
+
+// ---------- 渲染器 ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+$('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeef1f5);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 10, 3.0e6);
+camera.position.set(60000, 60000, 60000);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa6b8, 2.1));
+const d1 = new THREE.DirectionalLight(0xffffff, 2.4); d1.position.set(1, 1.6, 0.8); scene.add(d1);
+const d2 = new THREE.DirectionalLight(0xffffff, 1.0); d2.position.set(-1, 0.7, -0.9); scene.add(d2);
+
+let batched = null;
+let selected = null;
+
+// ---------- 先读 manifest，再按它的参数加载（换楼层不用改代码） ----------
+let manifest = { title: 'BIM', model: 'model.glb', hasTextures: false, stats: {} };
+try {
+  const r = await fetch('/manifest.json' + Q, { cache: 'no-store' });
+  if (r.ok) manifest = { ...manifest, ...(await r.json()) };
+} catch { /* 没有 manifest 也能跑，用默认值 */ }
+
+$('title').textContent = manifest.title || 'BIM';
+$('sub').textContent =
+  `${(manifest.stats.nodes || 0).toLocaleString()} 节点 · ${(manifest.stats.primitives || 0).toLocaleString()} 图元 · ` +
+  `${(manifest.stats.vertices || 0).toLocaleString()} 顶点 · 批次 ${manifest.stats.drawCalls ?? '—'}`;
+$('bootTitle').textContent = (manifest.title || 'BIM') + ' 加载中…';
+
+const draco = new DRACOLoader().setDecoderPath(manifest.dracoDecoderPath
+  || 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+draco.preload();
+
+boot(0.05, '下载模型（brotli 传输中）');
+new GLTFLoader().setDRACOLoader(draco).load('/model.glb' + Q,
+  async (gltf) => {
+    boot(0.55, '解析完成，正在批处理…');
+    let nMesh = 0;
+    gltf.scene.traverse((o) => { if (o.isMesh) nMesh++; });
+    $('nMesh').textContent = nMesh.toLocaleString();
+
+    if (RAW) {
+      $('mode').textContent = '原始（未批处理）';
+      $('mode').className = 'warn';
+      scene.add(gltf.scene);
+      frameAll(gltf.scene);
+      $('buildT').textContent = '0 ms';
+    } else {
+      // 有贴图的楼层必须保留 uv，否则材质全白
+      batched = await batchGLTFScene(gltf.scene, {
+        keepAttrs: manifest.hasTextures ? ['uv'] : [],
+        onProgress: ({ done, total, phase }) => {
+          if (phase === 'batch') boot(0.55 + 0.4 * (done / total), `批处理 ${done}/${total}`);
+        },
+      });
+      $('mode').textContent = `BatchedMesh × ${batched.stats.drawCalls}`;
+      $('mode').className = 'good';
+      $('buildT').textContent = batched.stats.buildMs + ' ms';
+      scene.add(batched.group);
+      frameAll(batched.group);
+    }
+    $('boot').style.display = 'none';
+  },
+  (e) => { if (e.total) boot(0.05 + 0.5 * (e.loaded / e.total), `下载 ${(e.loaded / 1048576).toFixed(1)} MB`); },
+  (err) => { $('bootMsg').textContent = '加载失败：' + err; console.error(err); }
+);
+
+// ---------- 相机自适应（模型通常是 mm 单位） ----------
+function frameAll(obj) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const dist = sphere.radius / Math.sin((camera.fov * Math.PI / 180) / 2);
+  camera.position.copy(sphere.center).addScaledVector(new THREE.Vector3(1, 0.85, 1).normalize(), dist * 0.95);
+  camera.near = Math.max(sphere.radius / 500, 0.1);
+  camera.far = sphere.radius * 12;
+  camera.updateProjectionMatrix();
+  controls.target.copy(sphere.center);
+  controls.update();
+}
+
+// ---------- 拾取 ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let down = null;
+
+renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!down || !batched) return;
+  if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hit = batched.pick(raycaster);
+  if (!hit) return;
+
+  if (selected) setHighlight(selected, 0xffffff);
+  selected = hit.rec;
+  setHighlight(selected, 0xffb020);
+
+  const props = selected.props || {};
+  const keys = Object.keys(props);
+  $('pName').textContent = selected.name;
+  $('pBody').innerHTML = keys.length
+    ? keys.slice(0, 400).map((k) =>
+        `<div class="kv"><i title="${esc(k)}">${esc(k)}</i><b>${esc(String(props[k]).trim())}</b></div>`).join('')
+      + (keys.length > 400 ? `<p style="color:#6b7688">… 其余 ${keys.length - 400} 项略（共 ${keys.length} 项）</p>` : '')
+    : '<p style="color:#6b7688">该构件无用户属性</p>';
+  $('props').style.display = 'flex';
+  $('props').querySelector('.body').scrollTop = 0;
+});
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+$('btnClose').onclick = () => {
+  if (selected) setHighlight(selected, 0xffffff);
+  selected = null;
+  $('props').style.display = 'none';
+};
+$('btnHide').onclick = () => {
+  if (!selected) return;
+  setVisible(selected, false);
+  $('props').style.display = 'none';
+  selected = null;
+};
+
+// ---------- 主循环 ----------
+let acc = 0, frames = 0, last = performance.now();
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  const now = performance.now();
+  acc += now - last; frames++; last = now;
+  if (acc > 500) {
+    $('fps').textContent = (frames * 1000 / acc).toFixed(0);
+    $('nCall').textContent = renderer.info.render.calls.toLocaleString();
+    $('nTri').textContent = renderer.info.render.triangles.toLocaleString();
+    acc = 0; frames = 0;
+  }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
