@@ -115,6 +115,9 @@ node src/cli.mjs verify  <a.glb> <b.glb>   # 只比两个文件（属性 + 可�
 4. **3ds Max 的 GLB 没有层级。** 12,244 个节点全在根上、最大深度 0，所以树是按 BIM 属性合成的。
 5. **`asset.version` 常写成 `2.1`**，而规范只允许 `2.0`，three.js / glTF-Transform 都会直接拒载。
    前端和 CLI 都会在字节层改成 `2.0`（导出侧后面选 2.0 就不需要这步了）。
+6. **有的导出会写出规范不允许的 `null`**（`"targets": null`、`"weights": null`），
+   three 的 GLTFLoader 会一路走到 `null.length`，报一句 `Cannot read properties of null (reading 'length')`。
+   前端进解析器前会清洗掉这些 null（`extras` 里的保留），细节见 [`web/README.md`](web/README.md)。
 
 ---
 

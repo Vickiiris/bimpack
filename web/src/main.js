@@ -347,6 +347,8 @@ async function loadFile(file) {
   state.busy = true;
   state.fileName = file.name;
   const baseName = file.name.replace(/\.(glb|gltf)$/i, '');
+  /** 出错时报给用户看是哪一步挂的 —— 光看 three 的原始报错根本猜不到 */
+  let stage = '读取文件';
 
   try {
     progress('读取文件…', 4, `文件：${file.name}（${mb(file.size)}）`);
@@ -354,17 +356,20 @@ async function loadFile(file) {
     state.rawBytes = raw;
 
     // 1) 体检（只读 JSON，不解码几何）
+    stage = '解析 GLB 结构';
     progress('解析 GLB 结构…', 12);
     state.info = inspectBytes(raw);
     state.inputCompressed = isAlreadyTight(state.info);
 
-    // 2) 修版本（3ds Max 常写 2.1，three 会拒绝加载）
+    // 2) 修版本 + 清掉非法的 null 字段（3ds Max 常写 2.1 和 "targets": null）
+    stage = '修正元数据';
     progress('检查 asset.version…', 20);
     const fixed = fixAssetVersion(raw);
     state.fixedBytes = fixed.bytes;
-    if (fixed.changed) progress(null, undefined, `asset.version ${fixed.from} → 2.0（已修正）`);
+    if (fixed.changed) progress(null, undefined, `已修正元数据（asset.version ${fixed.from} → 2.0${fixed.removedNulls ? `，清掉 ${fixed.removedNulls} 处 null` : ''}）`);
 
     // 3) 渲染
+    stage = '解码并渲染';
     progress('解码并渲染…', 30);
     await renderBytes(fixed.bytes, baseName);
 
@@ -383,7 +388,7 @@ async function loadFile(file) {
   } catch (err) {
     console.error(err);
     progressDone(0);
-    toast('加载失败：' + (err?.message || err), 'err');
+    toast(`加载失败（${stage}）：${err?.message || err}`, 'err');
   } finally {
     state.busy = false;
     // 按钮在 renderBytes 里被设置过一次，那时 busy 还是 true；

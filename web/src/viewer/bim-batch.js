@@ -30,6 +30,7 @@ function collect(scene) {
     if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh) return;
     const g = o.geometry;
     if (!g || !g.attributes.position) return;
+    if (!o.material) { skipped++; return; }
     if (Array.isArray(o.material)) { skipped++; return; }
     if (o.material.transparent && o.material.opacity === 0) { skipped++; return; }
 

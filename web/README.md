@@ -73,6 +73,26 @@ meshopt FILTER **不做量化**、只做 delta + 熵编码，读进来坐标又�
 重压（那个工具在本机 `local-tools/draco-tool/`，**不在本仓库**），它做量化，
 实测 208 MB → 63 MB（−69.6%），比浏览器版多压一半。
 
+### 为什么有的模型会报 `Cannot read properties of null (reading 'length')`
+
+这不是模型的几何坏了，是导出的 JSON 里有**规范不允许的 null**。最常见三处：
+
+- 图元上的 `"targets": null`（形变目标）
+- 节点 / mesh 上的 `"weights": null`（形变权重）
+- mesh 里没有 `primitives`
+
+three.js 的 `GLTFLoader` 在这些地方用 `!== undefined` 判空，null 会被当成「有值」，
+接着直接 `null.length` —— 报错就长这样，且完全看不出是哪个字段。
+
+所以进解析器之前会做一次字节级清洗（`core/glb.js` 的 `prepareGLB`）：
+
+1. 把 `extras` 之外的 null **删掉**（删掉 = 回落到规范默认值；`extras` 是 BIM 属性，里面的 null 原样保留）
+2. 引用型数组（场景根节点、children、joints、primitives、targets）里的 null 元素剔除
+   —— 注意只动这类「纯引用列表」，像 `nodes` / `meshes` / `accessors` 这种按**下标**被引用的数组绝不能删元素
+3. 没有 `primitives` 的 mesh 补成 `[]`，退化成一个空 Group 被批处理跳过 —— 一个坏图元不该让整层楼打不开
+
+回归测试：`node test/sanitize.mjs`（9 项断言，含「extras 里的 null 必须保留」）。
+
 ### 为什么层级树是"合成"的
 
 3ds Max 的 glTF 导出器把这层信息丢掉了：本例 208 MB 文件里 **12,244 个节点全在根上、

@@ -89,18 +89,103 @@ export function writeGLB(json, binBytes) {
 }
 
 /**
- * 把 asset.version 修正为标准值 "2.0"（不动二进制，只重写 JSON chunk）
- * @returns {{ bytes: Uint8Array, changed: boolean, from: string }}
+ * glTF 规范里**没有 null**，但导出器照样会写：3ds Max / 部分插件会留下
+ * `"targets": null`（图元的形变目标）、`"weights": null`（节点的形变权重）这类字段。
+ *
+ * three.js 的 GLTFLoader 在这些地方用 `!== undefined` 判断，null 会被当成「有值」，
+ * 接着直接 `null.length` —— 抛出的就是那句看不出所以然的
+ * `Cannot read properties of null (reading 'length')`，整个文件加载失败。
+ *
+ * 所以进解析器之前把 extras 之外的 null 全部删掉：删掉 = 回落到规范的默认值，
+ * 比留着 null 更接近规范。`extras` 是 BIM 属性，里面可能真有用户写的 null，必须原样保留。
  */
-export function fixAssetVersion(bytes) {
+function pruneNulls(node, stats) {
+  if (Array.isArray(node)) {
+    for (const v of node) pruneNulls(v, stats);
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+
+  for (const key of Object.keys(node)) {
+    const val = node[key];
+    if (val === null) {
+      delete node[key];
+      stats.count++;
+      stats.keys.add(key);
+      continue;
+    }
+    if (key === 'extras') continue;   // 用户属性，连 null 也照原样留着
+    pruneNulls(val, stats);
+  }
+}
+
+/**
+ * 引用型数组（场景的根节点、子节点、关节、图元、形变目标）里的 null 也要剔除。
+ * 只对这类「纯引用列表」动手 —— 像 nodes / meshes / accessors 这种**按下标被引用**的数组，
+ * 删元素会整体错位，绝对不能碰。
+ */
+function pruneRefList(list, stats) {
+  if (!Array.isArray(list)) return;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] === null) {
+      list.splice(i, 1);
+      stats.count++;
+    }
+  }
+}
+
+/**
+ * 进解析器前的字节级准备：修 asset.version + 清掉非法的 null 字段 + 补空的 primitives。
+ * 都不动二进制，只在必要时重写 JSON chunk；没改动就原样返回（零拷贝）。
+ *
+ * @returns {{ bytes: Uint8Array, changed: boolean, from: string,
+ *             removedNulls: number, nullKeys: string[] }}
+ */
+export function prepareGLB(bytes) {
   const { jsonBytes, binBytes } = parseGLB(bytes);
   const json = JSON.parse(decoder.decode(jsonBytes));
-  const from = json.asset?.version;
-  if (from === '2.0') return { bytes, changed: false, from };
 
-  json.asset = { ...(json.asset || {}), version: '2.0' };
-  return { bytes: writeGLB(json, binBytes), changed: true, from };
+  const from = json.asset?.version;
+  let changed = from !== '2.0';
+  if (changed) json.asset = { ...(json.asset || {}), version: '2.0' };
+
+  const stats = { count: 0, keys: new Set() };
+  pruneNulls(json, stats);
+
+  // 数组里的 null（引用型列表）
+  for (const s of json.scenes || []) pruneRefList(s?.nodes, stats);
+  for (const n of json.nodes || []) {
+    pruneRefList(n?.children, stats);
+    pruneRefList(n?.weights, stats);
+  }
+  for (const sk of json.skins || []) pruneRefList(sk?.joints, stats);
+  for (const m of json.meshes || []) {
+    // 没有任何 primitives 的 mesh 也是非法的（规范要求 minItems 1）。
+    // three 会直接 `primitives.length` 崩掉；补成空数组后它退化成一个空 Group，
+    // 后面的批处理会自然跳过 —— 一个坏图元不该让整层楼都打不开。
+    if (m && !Array.isArray(m.primitives)) {
+      m.primitives = [];
+      stats.count++;
+      continue;
+    }
+    pruneRefList(m?.primitives, stats);
+    for (const p of m?.primitives || []) pruneRefList(p?.targets, stats);
+  }
+
+  if (!changed && !stats.count) {
+    return { bytes, changed: false, from, removedNulls: 0, nullKeys: [] };
+  }
+  return {
+    bytes: writeGLB(json, binBytes),
+    changed: true,
+    from,
+    removedNulls: stats.count,
+    nullKeys: [...stats.keys],
+  };
 }
+
+/** 兼容旧名：等价于 prepareGLB */
+export const fixAssetVersion = prepareGLB;
 
 /** 给 Uint8Array 生成可下载的 Blob */
 export function toBlob(bytes, mime = 'model/gltf-binary') {
