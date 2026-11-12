@@ -37,6 +37,7 @@ const state = {
   processed: null,     // 处理结果 { bytes, params, verify }
   busy: false,
   loadedOnce: false,
+  inputCompressed: false, // 当前渲染的文件是否已压缩过（Draco / meshopt）
 };
 
 // ---------- 面板开关 ----------
@@ -230,6 +231,51 @@ $('btnGrid').onclick = () => {
   $('btnGrid').classList.toggle('on', on);
 };
 
+// ---------- 压缩按钮状态 ----------
+// 压过头的文件不再让压：量化解回 float32 再编码必然变大（实测 63.63 → 115.34 MB）。
+// 要更小只能回到原始导出重压，或换更低位深 —— 那是本地 Draco 工具的活。
+const LOCAL_TOOL_HINT =
+  '本地 Draco 工具：bimpack\\draco-tool\\ 目录里双击 start.cmd，拖入 3ds Max 导出的原始 .glb 即可。';
+
+/**
+ * 「已经压到极限，不该再压」的判据。
+ *
+ * 不能只看有没有 Draco：3ds Max 的原始导出本身就带 Draco，但用的是低压缩设置
+ * （实测 25.5 字节/顶点），浏览器重压到 11 B/顶点是有收益的 —— 这正是主流程。
+ * 真正压过的文件只有 4.5 B/顶点，再编码必然膨胀（实测 63.63 MB → 115.34 MB）。
+ * 所以看的是每顶点字节数，不是扩展名。
+ */
+function isAlreadyTight(info) {
+  if (!info) return false;
+  if (info.hasMeshopt) return true;               // 本工具的产物，同算法重压无收益
+  const bpv = info.bytesPerVertex || 0;
+  return !!info.hasDraco && bpv > 0 && bpv <= 8;  // Draco 极限约 4.5 B
+}
+
+function tightReason(info) {
+  if (!info) return '';
+  if (info.hasMeshopt) return '这份文件已经用 meshopt 压过，同样算法再压一次没有收益。';
+  return `这份文件已经压到 ${info.bytesPerVertex} 字节/顶点（Draco 极限约 4.5），再编码只会变大。`;
+}
+
+function updateProcessButton() {
+  const btn = $('btnProcess');
+  if (!state.loadedOnce) return;
+  const info = state.info;
+  const compressed = state.inputCompressed;
+
+  if (compressed) {
+    btn.textContent = '已压缩';
+    btn.classList.add('is-done');
+    btn.title = `${tightReason(info)}\n${LOCAL_TOOL_HINT}`;
+  } else {
+    btn.textContent = '压缩处理';
+    btn.classList.remove('is-done');
+    btn.title = `在浏览器里做「重排 + meshopt FILTER 编码」，不动顶点精度和材质（约 −45%）。当前 ${info?.bytesPerVertex ?? '?'} 字节/顶点`;
+  }
+  btn.disabled = state.busy || compressed;
+}
+
 // ---------- 进度 ----------
 function progress(title, pct, log) {
   const card = $('progressCard');
@@ -310,6 +356,7 @@ async function loadFile(file) {
     // 1) 体检（只读 JSON，不解码几何）
     progress('解析 GLB 结构…', 12);
     state.info = inspectBytes(raw);
+    state.inputCompressed = isAlreadyTight(state.info);
 
     // 2) 修版本（3ds Max 常写 2.1，three 会拒绝加载）
     progress('检查 asset.version…', 20);
@@ -323,19 +370,25 @@ async function loadFile(file) {
 
     progressDone();
     updateTopbar(file.name, file.size);
-    const flat = state.info.hierarchyMaxDepth === 0;
-    toast(
-      flat
-        ? `已加载。源文件节点是平铺的（无层级），已按 BIM 属性合成层级树`
-        : '已加载，可直接查看或点「压缩处理」',
-      'ok'
-    );
+    if (state.inputCompressed) {
+      toast(
+        `已加载。${tightReason(state.info)}不用再压 —— 想更小请用本地 Draco 工具处理 3ds Max 原始导出`,
+        'ok'
+      );
+    } else if (state.info.flatHierarchy) {
+      toast('已加载。源文件节点是平铺的（无层级），已按 BIM 属性合成层级树', 'ok');
+    } else {
+      toast('已加载，可直接查看或点「压缩处理」', 'ok');
+    }
   } catch (err) {
     console.error(err);
     progressDone(0);
     toast('加载失败：' + (err?.message || err), 'err');
   } finally {
     state.busy = false;
+    // 按钮在 renderBytes 里被设置过一次，那时 busy 还是 true；
+    // 这里必须再刷一次，否则加载完按钮仍是禁用状态
+    updateProcessButton();
   }
 }
 
@@ -407,6 +460,7 @@ async function renderBytes(bytes, baseName) {
   $('btnProps').hidden = false;
   $('btnProcess').hidden = false;
   $('btnDownload').hidden = false;
+  updateProcessButton();
 
   updateHud(batched, gltf);
 
@@ -420,8 +474,6 @@ function updateHud(batched) {
   $('hudParts').textContent = num(batched.stats.meshes);
   $('hudBatch').textContent = `${num(batched.stats.meshes)} → ${num(batched.stats.drawCalls)}`;
 }
-
-let verChip = null;
 
 function updateTopbar(name, size) {
   $('fileInfo').hidden = false;
@@ -440,22 +492,21 @@ function updateTopbar(name, size) {
       chip.textContent = '未压缩';
       chip.className = 'chip warn';
     }
-    if (info.gltfVersion !== '2.0') {
-      if (!verChip) {
-        verChip = document.createElement('span');
-        verChip.className = 'chip accent';
-        $('fileInfo').appendChild(verChip);
-      }
-      verChip.textContent = `版本 ${info.gltfVersion} → 2.0`;
-    }
   }
 }
 
 // ---------- 压缩处理 ----------
 $('btnProcess').onclick = async () => {
   if (state.busy || !state.fixedBytes) return;
+
+  // 已压缩的文件不让再压：量化后再解回 float32 只会更大（实测 63.6 → 115 MB）
+  if (state.inputCompressed) {
+    toast(`${tightReason(state.info)}${LOCAL_TOOL_HINT}`, 'err');
+    return;
+  }
+
   state.busy = true;
-  $('btnProcess').disabled = true;
+  updateProcessButton();
 
   const t0 = performance.now();
   try {
@@ -491,6 +542,7 @@ $('btnProcess').onclick = async () => {
     }
 
     state.processed = { bytes: out, params, verify, geo, encMs };
+    state.inputCompressed = true; // 输出已是 meshopt，别再压一次
 
     // 用压缩版重新渲染（顺便验证它真的能被 three 解开）
     progress('用压缩结果重建场景…', 94);
@@ -514,7 +566,7 @@ $('btnProcess').onclick = async () => {
     toast('处理失败：' + (err?.message || err), 'err');
   } finally {
     state.busy = false;
-    $('btnProcess').disabled = false;
+    updateProcessButton();
   }
 };
 

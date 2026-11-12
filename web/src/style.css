@@ -81,6 +81,14 @@ html, body {
 .btn.primary:hover { background: #1f5be0; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.ghost { color: var(--text); }
+
+/* 「已压缩」是终态不是禁用态：保持可读，只是不再可点 */
+.btn.is-done {
+  background: #f2f4f7;
+  border-color: var(--line);
+  color: var(--faint);
+  opacity: 1;
+}
 .btn.active {
   background: var(--accent-soft);
   border-color: #c9d8ff;

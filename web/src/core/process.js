@@ -96,6 +96,10 @@ export function inspect(bytes) {
     textures: (json.textures || []).length,
     vertices: verts,
     triangles: tris,
+    // 每顶点几何字节数：判断「这份文件是不是已经压到极限」的唯一可靠指标。
+    // 3ds Max 原始导出约 25.5 B（它自带 Draco，但用的是低压缩设置），
+    // Draco edgebreaker 重压后约 4.5 B，我们这个 meshopt 产物约 11 B。
+    bytesPerVertex: verts ? +(binLength / verts).toFixed(2) : 0,
     hasDraco: req.includes('KHR_draco_mesh_compression'),
     hasMeshopt: req.includes('EXT_meshopt_compression'),
     compressed: req.includes('KHR_draco_mesh_compression') || req.includes('EXT_meshopt_compression'),

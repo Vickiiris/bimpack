@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Draco 本地压缩 · BIM GLB</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26' fill='%232b6cff'%3E%E2%97%88%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --line: #e4e7ec; --line-soft: #eef0f3;
+    --text: #101828; --muted: #667085; --faint: #98a2b3;
+    --accent: #2b6cff; --accent-soft: #eef3ff;
+    --ok: #067647; --ok-soft: #ecfdf3;
+    --warn: #b54708; --warn-soft: #fff8f0;
+    --err: #b42318; --err-soft: #fef3f2;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 60px;
+  }
+
+  header {
+    height: 56px; display: flex; align-items: center; gap: 12px;
+    padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .logo { color: var(--accent); font-size: 17px; }
+  .brand { font-weight: 650; letter-spacing: -.01em; }
+  .brand small { color: var(--faint); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .pill {
+    font-size: 11.5px; color: var(--muted); background: var(--line-soft);
+    border-radius: 5px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+  }
+
+  main { max-width: 940px; margin: 0 auto; padding: 22px 20px 0; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+
+  /* 拖放区 */
+  .drop {
+    border: 1.5px dashed #c3cad6; background: #fff;
+    border-radius: 14px; padding: 40px 24px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop.hover { border-color: var(--accent); background: var(--accent-soft); }
+  .drop.busy { opacity: .6; pointer-events: none; }
+  .drop-icon { font-size: 34px; color: #b9c1cf; line-height: 1; margin-bottom: 10px; }
+  .drop h1 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  .drop p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .drop .hint { margin-top: 14px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .drop .hint span { font-size: 11.5px; color: var(--muted); background: var(--line-soft); border-radius: 5px; padding: 2px 8px; }
+
+  /* 选项 */
+  .opts { margin: 16px 0 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .opts .label { color: var(--muted); font-size: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  .seg button {
+    font: inherit; font-size: 12px; padding: 6px 12px; border: 0; background: transparent;
+    color: var(--muted); cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .opts .desc { color: var(--faint); font-size: 11.5px; }
+
+  /* 结果列表 */
+  #list { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .item { padding: 14px 16px; }
+  .item-head { display: flex; align-items: center; gap: 10px; }
+  .item-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-head .size { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .badge {
+    font-size: 11px; border-radius: 5px; padding: 1px 7px; white-space: nowrap;
+    background: var(--line-soft); color: var(--muted);
+  }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .badge.run { background: var(--accent-soft); color: var(--accent); }
+
+  .bar { height: 4px; border-radius: 3px; background: var(--line-soft); overflow: hidden; margin: 11px 0 0; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+  .bar > i.ok { background: var(--ok); }
+  .bar > i.err { background: var(--err); }
+
+  .msg { margin-top: 10px; font-size: 12.5px; line-height: 1.65; }
+  .msg.warn { color: var(--warn); background: var(--warn-soft); border: 1px solid #f0dcc9; border-radius: 7px; padding: 8px 11px; }
+  .msg.err { color: var(--err); background: var(--err-soft); border: 1px solid #f5cfcb; border-radius: 7px; padding: 8px 11px; }
+
+  .stats {
+    margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 6px 26px; font-size: 12px;
+  }
+  .stats div { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .actions { margin-top: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    font: inherit; font-size: 12.5px; padding: 6px 14px; border-radius: 7px;
+    border: 1px solid var(--line); background: #fff; color: var(--text);
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  .btn:hover { background: #f9fafb; border-color: #d0d5dd; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #1f5be0; }
+  .btn.ghost { color: var(--muted); }
+  .btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+  details { margin-top: 11px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
+  .rows { margin-top: 8px; border-top: 1px solid var(--line-soft); }
+  .row { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--line-soft); }
+  .row .ico { color: var(--ok); }
+  .row.bad .ico { color: var(--err); }
+  .row .lbl { color: var(--muted); overflow-wrap: anywhere; }
+  .row .val { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; max-width: 46%; overflow-wrap: anywhere; }
+
+  footer { max-width: 940px; margin: 26px auto 0; padding: 0 20px; color: var(--faint); font-size: 11.5px; line-height: 1.9; }
+  code { background: var(--line-soft); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">◈</span>
+  <span class="brand">Draco 本地压缩 <small>文件只在本机处理，不上传</small></span>
+  <div class="right">
+    <span class="pill" id="port"></span>
+  </div>
+</header>
+
+<main>
+  <section class="drop" id="drop">
+    <div class="drop-icon">⬡</div>
+    <h1>把 .glb 拖进来</h1>
+    <p>或点击选择文件 —— 支持多选，逐个压缩</p>
+    <div class="hint">
+      <span>3ds Max 原始导出</span><span>Draco 边断裂编码</span><span>压完自动校验属性</span>
+    </div>
+    <input type="file" id="file" accept=".glb,.gltf" multiple hidden />
+  </section>
+
+  <section class="opts">
+    <span class="label">压缩档位</span>
+    <div class="seg" id="seg">
+      <button data-preset="balance" class="on">均衡 14bit</button>
+      <button data-preset="high">高保真 16bit</button>
+      <button data-preset="small">小体积 12bit</button>
+    </div>
+    <span class="desc" id="presetDesc">位置 14 bit，30 m 尺度误差约 3.6 mm，建筑构件不可见</span>
+  </section>
+
+  <section id="list"></section>
+</main>
+
+<footer>
+  产物保存在 <code>draco-tool\out\</code>，点「下载」另存到别处。<br />
+  已经是 Draco 压缩过的文件会被直接拒绝 —— 量化后再用浮点重压只会变大。<br />
+  停止服务：关掉那个黑窗口，或双击 <code>stop.cmd</code>。
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PRESET_DESC = {
+  balance: '位置 14 bit，30 m 尺度误差约 3.6 mm，建筑构件不可见',
+  high: '位置 16 bit，误差 ≈ 0.9 mm；二次编码或要毫米级保真时用',
+  small: '位置 12 bit，适合远观总图，单体交付别用',
+};
+
+let preset = 'balance';
+let busy = false;
+
+const mb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : (n / 1024).toFixed(1) + ' KB');
+const num = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('en-US'));
+
+$('seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-preset]');
+  if (!btn) return;
+  preset = btn.dataset.preset;
+  [...$('seg').children].forEach((b) => b.classList.toggle('on', b === btn));
+  $('presetDesc').textContent = PRESET_DESC[preset];
+});
+
+// ---------- 拖放 ----------
+const drop = $('drop');
+let depth = 0;
+window.addEventListener('dragenter', (e) => { e.preventDefault(); if (++depth === 1) drop.classList.add('hover'); });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  if (--depth <= 0) { depth = 0; drop.classList.remove('hover'); }
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  depth = 0;
+  drop.classList.remove('hover');
+  handleFiles([...e.dataTransfer.files]);
+});
+drop.addEventListener('click', () => { if (!busy) $('file').click(); });
+$('file').addEventListener('change', (e) => {
+  handleFiles([...e.target.files]);
+  e.target.value = '';
+});
+
+// ---------- 队列 ----------
+async function handleFiles(files) {
+  const list = files.filter((f) => /\.(glb|gltf)$/i.test(f.name));
+  if (!list.length) return;
+  if (busy) return;
+  busy = true;
+  drop.classList.add('busy');
+  for (const f of list) {
+    // 串行：Draco 编码是 CPU 密集的，并发只会互相抢核
+    await compressOne(f);
+  }
+  busy = false;
+  drop.classList.remove('busy');
+}
+
+function itemShell(file) {
+  const el = document.createElement('article');
+  el.className = 'card item';
+  el.innerHTML = `
+    <div class="item-head">
+      <span class="item-name"></span>
+      <span class="size">${mb(file.size)}</span>
+      <span class="badge run" style="margin-left:auto">准备中</span>
+    </div>
+    <div class="bar"><i></i></div>
+    <div class="body"></div>`;
+  el.querySelector('.item-name').textContent = file.name;
+  $('list').prepend(el);
+  return el;
+}
+
+function compressOne(file) {
+  const el = itemShell(file);
+  const badge = el.querySelector('.badge');
+  const fill = el.querySelector('.bar > i');
+  const body = el.querySelector('.body');
+  const t0 = performance.now();
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    const q = new URLSearchParams({ name: file.name, preset });
+    xhr.open('POST', '/api/compress?' + q.toString());
+    xhr.responseType = 'json';
+
+    const timer = setInterval(() => {
+      const s = ((performance.now() - t0) / 1000).toFixed(0);
+      badge.textContent = `${fill.dataset.phase || '压缩中'} ${s}s`;
+    }, 500);
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const p = e.loaded / e.total;
+      fill.dataset.phase = '上传中';
+      fill.style.width = (p * 35).toFixed(1) + '%';
+      if (p >= 1) { fill.dataset.phase = '压缩中'; fill.style.width = '40%'; }
+    };
+
+    xhr.onload = () => {
+      clearInterval(timer);
+      const r = xhr.response || { ok: false, message: `HTTP ${xhr.status}` };
+      renderResult(el, file, r);
+      resolve();
+    };
+    xhr.onerror = () => {
+      clearInterval(timer);
+      renderResult(el, file, { ok: false, error: 'network', message: '连不上本地服务，窗口是不是被关掉了？' });
+      resolve();
+    };
+
+    xhr.send(file);
+  });
+}
+
+function renderResult(el, file, r) {
+  const badge = el.querySelector('.badge');
+  const fill = el.querySelector('.bar > i');
+  const body = el.querySelector('.body');
+
+  // 已压缩：直接说明原因，不给下载
+  if (!r.ok && r.error === 'already-compressed') {
+    badge.className = 'badge warn';
+    badge.textContent = '无需再压';
+    fill.classList.add('ok');
+    fill.style.width = '100%';
+    body.innerHTML = `<div class="msg warn">${esc(r.message)}</div>`;
+    return;
+  }
+
+  if (!r.ok) {
+    badge.className = 'badge err';
+    badge.textContent = '失败';
+    fill.classList.add('err');
+    fill.style.width = '100%';
+    body.innerHTML = `<div class="msg err">${esc(r.message || '压缩失败')}</div>`;
+    return;
+  }
+
+  const grew = r.savedPercent <= 0;
+  badge.className = 'badge ' + (grew ? 'warn' : 'ok');
+  badge.textContent = grew ? '反而变大' : '压缩完成';
+  fill.classList.toggle('ok', !grew); // add('') 会抛 DOMException，必须用 toggle
+  fill.style.width = '100%';
+
+  const rows = r.verify?.rows || [];
+  const failed = rows.filter((x) => !x.ok);
+  const p = r.params || {};
+
+  body.innerHTML = `
+    <div class="stats">
+      <div><span>压缩前</span><b>${mb(r.input.size)}</b></div>
+      <div><span>压缩后</span><b>${mb(r.output.size)}</b></div>
+      <div><span>变化</span><b style="color:${grew ? 'var(--warn)' : 'var(--ok)'}">${(r.savedPercent >= 0 ? '−' : '+') + Math.abs(r.savedPercent).toFixed(1)}%</b></div>
+      <div><span>耗时</span><b>${(r.ms / 1000).toFixed(1)} s</b></div>
+      <div><span>每顶点</span><b>${r.output.bytesPerVertex ?? '—'} B</b></div>
+      <div><span>三角面</span><b>${num(r.input.triangles)}</b></div>
+    </div>
+    <div class="stats" style="margin-top:2px">
+      <div><span>节点</span><b>${num(r.output.nodes)}</b></div>
+      <div><span>图元</span><b>${num(r.output.primitives)}</b></div>
+      <div><span>材质</span><b>${num(r.output.materials)}</b></div>
+      <div><span>BIM 属性</span><b>${num(r.output.propEntries)}</b></div>
+    </div>
+    ${r.input.reencoded && p.quantizePosition < 16 ? `<div class="msg" style="color:var(--muted)">源文件本身已是 Draco（16 bit 量化）。这次用 ${p.quantizePosition} bit 重编码属于<b>二次量化</b>，30 m 尺度误差约 3.6 mm；要零二次损失请选「高保真 16bit」。</div>` : ''}
+    ${grew ? `<div class="msg warn">压缩后反而更大 —— 这份文件几何本来就少，编码开销超过了收益，建议直接用原文件。</div>` : ''}
+    <div class="actions">
+      <a class="btn primary" href="/api/download?f=${encodeURIComponent(r.outName)}">下载 ${esc(r.outName)}</a>
+      <span class="badge ${failed.length ? 'err' : 'ok'}">${rows.length ? (failed.length ? `校验 ${failed.length} 项未通过` : `属性校验 ${rows.length} 项全过`) : '未校验'}</span>
+      <span style="color:var(--faint);font-size:11.5px">edgebreaker · pos ${p.quantizePosition ?? '—'}bit · normal ${p.quantizeNormal ?? '—'}bit</span>
+    </div>
+    ${rows.length ? `
+    <details>
+      <summary>展开 ${rows.length} 项校验明细</summary>
+      <div class="rows">
+        ${rows.map((x) => `
+          <div class="row ${x.ok ? '' : 'bad'}">
+            <span class="ico">${x.ok ? '✓' : '✗'}</span>
+            <span class="lbl">${esc(x.label)}</span>
+            <span class="val">${esc(x.a ?? '')}${x.b ? '　→　' + esc(x.b) : ''}</span>
+          </div>`).join('')}
+      </div>
+    </details>` : ''}
+  `;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+$('port').textContent = location.host;
+</script>
+</body>
+</html>

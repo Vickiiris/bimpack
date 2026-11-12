@@ -68,7 +68,8 @@ PORT=8081 node src/cli.mjs serve   # 换端口
 改完自检一行：
 
 ```bash
-python -c "b=open('start.cmd','rb').read(); print('non-ascii', sum(1 for x in b if x>127), '| CRLF', b.count(b'
+python -c "b=open('start.cmd','rb').read(); print('non-ascii', sum(1 for x in b if x>127), '| CRLF', b.count(b'
+
 '))"
 # 期望：non-ascii 0 | CRLF > 0
 ```
@@ -92,6 +93,25 @@ taskkill /PID <上面查到的号> /F
 
 > 之前"每开一次就多占一个端口"，是因为关窗口时子进程没被带走，残留实例继续占着 8080，
 > 新实例只能顺延到 8081。现在有单实例锁 + `stop.cmd` 兜底扫描，不会再累积。
+
+---
+
+## 只想压一个文件？用 `draco-tool/`
+
+如果不需要 viewer、上传历史、报告这些，只要「拖进去 → 出压缩文件」，
+用 **`draco-tool/`**：双击里面的 `start.cmd`，浏览器打开拖放页面即可。
+
+```bash
+cd draco-tool
+# 双击 start.cmd；或
+node server.mjs        # http://localhost:8099
+```
+
+它复用同一份 `src/compress.mjs`（Draco edgebreaker + 量化），实测
+**208.24 MB → 60.67 MB（−70.9%，17.3 s，19 项校验全过）**，
+并且会拒绝已经压到极限的文件（≤8 字节/顶点）—— 量化不可逆，再压只会变大。
+
+详见 [`draco-tool/README.md`](draco-tool/README.md)。
 
 ---
 
