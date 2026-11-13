@@ -77,10 +77,39 @@ function flipWinding(geo) {
   }
 }
 
+/**
+ * GLTFLoader 会给「图元里没有 material 索引」的网格造一个默认材质：
+ * 白、metalness = 1、roughness = 1、没有名字。
+ * 金属度 1 在没有环境贴图时几乎不出漫反射 —— 渲出来就是纯黑，
+ * 表现就是"部分材质（墙、型钢）变成黑的"，而 3ds Max 里这类构件是灰白素模。
+ * 这里统一换成一个灰白、非金属的默认材质，并给它名字以便属性面板能读出来。
+ */
+const FALLBACK = { name: '默认材质', color: 0xd5dae0, metalness: 0, roughness: 0.7 };
+
 function collect(scene) {
   const groups = new Map(); // material.uuid → { material, items: [] }
   const geoUse = new Map(); // geometry.uuid → 引用次数
   let skipped = 0;
+  let fallbackMat = null;
+
+  /** 把 GLTFLoader 的默认材质（无名字 + metalness/roughness 全 1）换成素模材质 */
+  function normalizeDefault(mesh) {
+    const m = mesh.material;
+    if (!m || m.name) return m;
+    if (!(m.isMeshStandardMaterial || m.isMeshPhysicalMaterial)) return m;
+    if (Math.abs(m.metalness - 1) > 1e-6 || Math.abs(m.roughness - 1) > 1e-6) return m;
+
+    if (!fallbackMat) {
+      fallbackMat = m.clone();
+      fallbackMat.name = FALLBACK.name;
+      fallbackMat.color = new THREE.Color(FALLBACK.color);
+      fallbackMat.metalness = FALLBACK.metalness;
+      fallbackMat.roughness = FALLBACK.roughness;
+      fallbackMat.needsUpdate = true;
+    }
+    mesh.material = fallbackMat;   // 全部无材质件共用一份 → 只多一个批次
+    return fallbackMat;
+  }
 
   scene.traverse((o) => {
     if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh) return;
@@ -88,6 +117,7 @@ function collect(scene) {
     if (!g || !g.attributes.position) return;
     if (!o.material) { skipped++; return; }
     if (Array.isArray(o.material)) { skipped++; return; }
+    normalizeDefault(o);
     if (o.material.transparent && o.material.opacity === 0) { skipped++; return; }
 
     let rec = groups.get(o.material.uuid);
