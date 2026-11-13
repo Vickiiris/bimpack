@@ -156,6 +156,16 @@ function selectRec(rec) {
   showProps([rec], null);
 }
 
+/** 取消全部高亮 + 清树选中 + 属性面板复位（点空白处 / Esc） */
+function clearSelection() {
+  if (!selectedRecs.length && !lastRec) return;
+  for (const r of selectedRecs) setHighlight(r, false);
+  selectedRecs = [];
+  lastRec = null;
+  tree.clearSelection();
+  showProps([], null);
+}
+
 // ---------- 属性面板 ----------
 function showProps(recs, node) {
   const box = $('props');
@@ -215,6 +225,7 @@ viewer.onClick((x, y) => {
   if (!state.batched) return;
   const hit = viewer.pick(x, y, (rc) => state.batched.pick(rc));
   if (hit?.rec) selectRec(hit.rec);
+  else clearSelection(); // 点到空白处 = 取消高亮
 });
 
 viewer.onFrame((fps) => {
@@ -611,11 +622,7 @@ window.addEventListener('keydown', (e) => {
   const tag = e.target?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
-  if (e.key === 'Escape') {
-    for (const r of selectedRecs) setHighlight(r, false);
-    selectedRecs = [];
-    return;
-  }
+  if (e.key === 'Escape') clearSelection();
   if (!state.loadedOnce) return;
   if (e.key === '1') togglePanel('left');
   if (e.key === '2') togglePanel('right');

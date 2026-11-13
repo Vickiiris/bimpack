@@ -362,11 +362,20 @@ export function createTree(container, opts = {}) {
     return hits;
   }
 
+  /** 清掉树里的选中态（点空白处取消高亮时用） */
+  function clearSelection() {
+    if (selectedRow) {
+      selectedRow.classList.remove('selected');
+      selectedRow = null;
+    }
+  }
+
   return {
     setModel,
     setMode,
     reveal,
     search,
+    clearSelection,
     get mode() { return mode; },
     get root() { return root; },
   };
