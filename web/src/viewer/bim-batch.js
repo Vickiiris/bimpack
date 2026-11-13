@@ -8,7 +8,8 @@
  * 让层级树点选后能直接高亮 + 相机飞过去。
  *
  * 三个必须遵守的 BatchedMesh 硬约束（否则直接抛错）：
- *   1. 同一 batch 内所有几何的「属性集合」必须完全一致 → 统一剥到只剩 position/normal
+ *   1. 同一 batch 内所有几何的「属性集合」必须完全一致 → 按材质需要保留 uv / uv1 / color，
+ *      缺的统一补齐（早期版本只留 position/normal，带顶点色或贴图的构件会显示成纯灰）
  *   2. 同一 batch 内所有几何要么全有 index 要么全没有 → 缺的自动补满索引
  *   3. itemSize / normalized 必须一致 → 统一转 Float32
  * 易踩的坑：maxIndexCount 默认是 maxVertexCount*2，
@@ -20,6 +21,61 @@ import * as THREE from 'three';
 const IDENTITY = new THREE.Matrix4();
 const HILIGHT = new THREE.Color(0xff8a3d);
 const WHITE = new THREE.Color(0xffffff);
+
+/** 材质上用到的贴图槽（有任意一个就需要 UV） */
+const MAP_SLOTS = [
+  'map', 'normalMap', 'bumpMap', 'displacementMap', 'roughnessMap', 'metalnessMap',
+  'aoMap', 'lightMap', 'emissiveMap', 'alphaMap', 'specularMap', 'envMap',
+  'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap',
+  'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap', 'thicknessMap',
+  'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap',
+];
+
+/**
+ * 这份材质需要哪些顶点属性。
+ * BatchedMesh 要求同批属性集合完全一致，所以只能按材质定：同批共用一份材质，
+ * 需要什么就留什么，缺的补默认值。多留的只是显存，少留会直接显示错色/错贴图。
+ */
+function extraAttrsFor(material) {
+  const out = [];
+  const maps = MAP_SLOTS.map((k) => material[k]).filter(Boolean);
+  if (maps.length) out.push('uv');
+  // three 的 texture.channel：1 → uv1（glTF 的 TEXCOORD_1）
+  if (maps.some((t) => (t.channel ?? 0) === 1)) out.push('uv1');
+  if (material.vertexColors) out.push('color');
+  return out;
+}
+
+/** 烘进世界变换后，镜像（负缩放）会把三角形绕序反过来 → 背面剔除后整块消失/发暗。
+ *  只翻绕序、不动法线：applyMatrix4 用的是逆转置矩阵，镜像件的法线方向本来就是对的，
+ *  再取反会把光照打反（看着像整块被压暗）。 */
+function flipWinding(geo) {
+  const idx = geo.index;
+  if (idx) {
+    const a = idx.array;
+    for (let i = 0; i < a.length; i += 3) {
+      const t = a[i];
+      a[i] = a[i + 2];
+      a[i + 2] = t;
+    }
+    idx.needsUpdate = true;
+  } else {
+    // 非索引几何：按顶点顺序反序
+    for (const name of Object.keys(geo.attributes)) {
+      const attr = geo.attributes[name];
+      const size = attr.itemSize;
+      const src = attr.array;
+      const dst = src.slice();
+      const n = attr.count;
+      for (let i = 0; i < n; i++) {
+        const j = n - 1 - i;
+        for (let k = 0; k < size; k++) dst[i * size + k] = src[j * size + k];
+      }
+      attr.array.set(dst);
+      attr.needsUpdate = true;
+    }
+  }
+}
 
 function collect(scene) {
   const groups = new Map(); // material.uuid → { material, items: [] }
@@ -96,8 +152,10 @@ function normalizeGeometry(src, matrixWorld, cloneIt, keepVertexAttrs) {
   const vertCount = geo.attributes.position.count;
   for (const name of keepVertexAttrs) {
     if (geo.attributes[name]) continue;
-    if (name === 'uv') geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(vertCount * 2), 2));
-    else if (name === 'color') {
+    if (name === 'uv' || name === 'uv1' || name === 'uv2' || name === 'uv3') {
+      geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(vertCount * 2), 2));
+    } else if (name === 'color') {
+      // 缺顶点色的补白，材质里 vertexColors=true 时乘上去不会变黑
       geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(vertCount * 3).fill(1), 3));
     }
   }
@@ -115,8 +173,11 @@ function normalizeGeometry(src, matrixWorld, cloneIt, keepVertexAttrs) {
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(geo.index.array), 1));
   }
 
-  // 世界变换烘进顶点（等价于实例矩阵设为单位阵）
+  // 世界变换烘进顶点（等价于实例矩阵设为单位阵）。镜像（负缩放）会把绕序反掉，
+  // 不处理的话这些构件会被背面剔除、看起来"少了/发黑"。
+  const mirrored = matrixWorld.determinant() < 0;
   geo.applyMatrix4(matrixWorld);
+  if (mirrored) flipWinding(geo);
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
   return geo;
@@ -134,7 +195,7 @@ function normalizeGeometry(src, matrixWorld, cloneIt, keepVertexAttrs) {
  */
 export async function batchGLTFScene(scene, opts = {}) {
   const { onProgress = () => {}, keepAttrs = [], chunk = 250, nameOf = null } = opts;
-  const keepVertexAttrs = ['position', 'normal', ...keepAttrs];
+  const baseAttrs = ['position', 'normal', ...keepAttrs];
 
   scene.updateMatrixWorld(true);
   const tStart = performance.now();
@@ -154,6 +215,9 @@ export async function batchGLTFScene(scene, opts = {}) {
   let done = 0;
 
   for (const { material, items } of groups.values()) {
+    // 同一批共用一份材质：它要什么顶点属性就留什么（uv / uv1 / color）
+    const keepVertexAttrs = [...new Set([...baseAttrs, ...extraAttrsFor(material)])];
+
     let maxV = 0;
     let maxI = 0;
     for (const m of items) {
