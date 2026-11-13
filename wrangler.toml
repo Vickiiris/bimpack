@@ -1,0 +1,5 @@
+# Cloudflare Pages 构建配置（CI 会在“检测 Wrangler 配置文件”这一步读取它）
+# 构建命令仍在 Pages 项目的仪表盘里设置（npm run build），
+# 这里只需要告诉它静态产物在哪个目录。
+name = "bimpack"
+pages_build_output_dir = "web/dist"

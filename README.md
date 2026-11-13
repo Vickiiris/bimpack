@@ -30,6 +30,8 @@ npm run build      # → web/dist/
 npm run preview    # 本地预览构建产物
 ```
 
+**部署到静态托管（如 Cloudflare Pages）**：构建命令填 `npm run build`（在仓库根目录执行，会自动装 web/ 依赖并构建，输出目录 `web/dist`，已配 `wrangler.toml`）；也可以自己在本地 `npm run build` 后只上传 `web/dist/`。注意**托管服务只提供静态文件**，Draco 压缩在浏览器里做，不依赖任何服务端。
+
 打开页面就是一个拖放区，**不会自动加载任何模型**；把 `.glb` 拖进去即可。
 
 能做的事：

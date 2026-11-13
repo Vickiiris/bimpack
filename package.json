@@ -8,7 +8,8 @@
   },
   "scripts": {
     "inspect": "node src/cli.mjs inspect",
-    "build": "node src/cli.mjs build",
+    "build": "node scripts/build-web.mjs",
+    "build:glb": "node src/cli.mjs build",
     "verify": "node src/cli.mjs verify",
     "test": "node test/batch.test.mjs",
     "dev": "npm --prefix web run dev",
