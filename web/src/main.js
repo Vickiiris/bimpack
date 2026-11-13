@@ -70,6 +70,11 @@ function togglePanel(which) {
 $('btnTree').onclick = () => togglePanel('left');
 $('btnProps').onclick = () => togglePanel('right');
 $('btnCloseLeft').onclick = () => setPanel('left', false);
+$('btnShowAll').onclick = () => {
+  if (!state.loadedOnce) return;
+  tree.showAll();
+  toast('已显示全部构件');
+};
 $('btnCloseRight').onclick = () => setPanel('right', false);
 
 // ---------- 视口 ----------

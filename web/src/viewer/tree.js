@@ -10,7 +10,14 @@
  * 12,244 个节点不能一次全塞进 DOM，所以：初始只渲染根的子节点，展开时才插入子节点；
  * 单个节点子项超过上限时只渲染前 N 个，其余提示用搜索定位。
  * 搜索走全树遍历，命中后显示扁平列表并自动展开祖先链。
+ *
+ * 显示/隐藏：
+ *   - 每行一个复选框：勾选 = 显示，取消 = 隐藏；组是三态（全显 / 全隐 / 部分 = indeterminate）
+ *   - 隐藏组 = 隐藏整棵子树；隐藏的构件不可见、也不可被拾取（BatchedMesh 拾取会跳过隐藏实例）
+ *   - 右键行 → 菜单：隐藏 / 显示 / 全部显示
  */
+
+import { setVisible } from './bim-batch.js';
 
 const MAX_CHILDREN_RENDER = 800;
 
@@ -148,6 +155,121 @@ export function createTree(container, opts = {}) {
   const iconFor = (node) => (node.isGroup ? '▤' : '◆');
   const clsFor = (node) => (node.isGroup ? 'group' : 'mesh');
 
+  // ---------- 显示 / 隐藏 ----------
+  // 状态只在 rec.visible 上存（默认 true），复选框三态每现算：
+  // 组的可见性永远从子项推导，不单独存，改组 = 改整棵子树的 rec。
+
+  /** 节点可见性：true / false / 'mixed'（组内部分隐藏） */
+  function visState(node) {
+    let sawOn = false;
+    let sawOff = false;
+    const walk = (n) => {
+      if (n.recs) for (const r of n.recs) (r.visible === false ? (sawOff = true) : (sawOn = true));
+      for (const c of n.children) walk(c);
+    };
+    walk(node);
+    if (!sawOff) return true;
+    if (!sawOn) return false;
+    return 'mixed';
+  }
+
+  /** 把一个节点的复选框与行样式刷到最新（行不在 DOM 里就跳过） */
+  function syncRow(node) {
+    const row = elByNode.get(node);
+    if (!row) return;
+    const st = visState(node);
+    const cb = row.querySelector('.node-vis');
+    if (cb) {
+      cb.checked = st === true;
+      cb.indeterminate = st === 'mixed';
+    }
+    row.classList.toggle('hidden', st === false);
+    row.classList.toggle('partial', st === 'mixed');
+  }
+
+  /** 设置节点（含整棵子树）的可见性，并刷新它和所有已渲染祖先的复选框 */
+  function setNodeVisible(node, on) {
+    const walk = (n) => {
+      if (n.recs) for (const r of n.recs) {
+        if (r.visible === on) continue;
+        r.visible = on;
+        setVisible(r, on);
+      }
+      for (const c of n.children) walk(c);
+    };
+    walk(node);
+    for (let p = node; p; p = p.parent) syncRow(p);
+    // 已渲染的后代行也要刷（隐藏组时子行的勾要跟着消失）
+    const syncKids = (n) => {
+      for (const c of n.children) { syncRow(c); syncKids(c); }
+    };
+    syncKids(node);
+  }
+
+  /** 全部显示（重置所有 rec，刷新所有已渲染行）。
+   *  必须两趟：先重置完所有 rec 再刷行，否则父行刷的时候子树还没恢复，
+   *  算出来仍是隐藏态、再也不刷新。 */
+  function showAll() {
+    if (!root) return;
+    const reset = (n) => {
+      if (n.recs) for (const r of n.recs) {
+        if (r.visible !== true) { r.visible = true; setVisible(r, true); }
+      }
+      for (const c of n.children) reset(c);
+    };
+    reset(root);
+    const sync = (n) => {
+      syncRow(n);
+      for (const c of n.children) sync(c);
+    };
+    sync(root);
+  }
+
+  // ---------- 右键菜单 ----------
+  let ctxMenu = null;
+  function closeCtxMenu() { ctxMenu?.remove(); ctxMenu = null; }
+
+  function openCtxMenu(x, y, node) {
+    closeCtxMenu();
+    ctxMenu = document.createElement('div');
+    ctxMenu.className = 'ctx-menu';
+    const items = [
+      ['隐藏', () => setNodeVisible(node, false)],
+      ['显示', () => setNodeVisible(node, true)],
+      ['全部显示', () => showAll()],
+    ];
+    for (const [label, fn] of items) {
+      const it = document.createElement('div');
+      it.className = 'ctx-item';
+      it.textContent = label;
+      it.addEventListener('click', () => { closeCtxMenu(); fn(); });
+      ctxMenu.appendChild(it);
+    }
+    document.body.appendChild(ctxMenu);
+    const r = ctxMenu.getBoundingClientRect();
+    ctxMenu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - r.width - 8))}px`;
+    ctxMenu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 8))}px`;
+  }
+
+  // 点别处 / Esc 关菜单；菜单自己内部的按下不算（否则菜单项还没点到就被关了）
+  document.addEventListener('pointerdown', (e) => {
+    if (ctxMenu && e.target instanceof Node && ctxMenu.contains(e.target)) return;
+    closeCtxMenu();
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
+
+  /** 行级复选框（勾选=显示，取消=隐藏；不触发行选中） */
+  function makeVisCheckbox(node) {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'node-vis';
+    cb.title = '勾选显示 / 取消勾选隐藏';
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('dblclick', (e) => e.stopPropagation());
+    cb.addEventListener('change', () => setNodeVisible(node, cb.checked));
+    return cb;
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
@@ -188,6 +310,8 @@ export function createTree(container, opts = {}) {
     caret.textContent = '▶';
     row.appendChild(caret);
 
+    row.appendChild(makeVisCheckbox(node));
+
     const icon = document.createElement('span');
     icon.className = 'node-icon ' + clsFor(node);
     icon.textContent = iconFor(node);
@@ -214,6 +338,7 @@ export function createTree(container, opts = {}) {
     row.__item = item;
     row.__wrap = null;
     elByNode.set(node, row);
+    syncRow(node); // 按当前 rec.visible 刷复选框与隐藏样式
 
     caret.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -230,6 +355,13 @@ export function createTree(container, opts = {}) {
     row.addEventListener('dblclick', (e) => {
       e.preventDefault();
       onZoom?.(node);
+    });
+
+    // 右键：隐藏 / 显示 / 全部显示
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openCtxMenu(e.clientX, e.clientY, node);
     });
 
     return item;
@@ -350,13 +482,24 @@ export function createTree(container, opts = {}) {
       const row = document.createElement('div');
       row.className = 'node';
       row.title = node.name;
-      row.innerHTML =
-        `<span class="node-caret leaf"></span>` +
-        `<span class="node-icon mesh">◆</span>` +
-        `<span class="node-name">${esc(node.name)}</span>`;
+      row.appendChild(makeVisCheckbox(node));
+      const icon = document.createElement('span');
+      icon.className = 'node-icon mesh';
+      icon.textContent = '◆';
+      row.appendChild(icon);
+      const name = document.createElement('span');
+      name.className = 'node-name';
+      name.textContent = node.name;
+      row.appendChild(name);
       row.addEventListener('click', () => select(node, row));
-      row.addEventListener('dblclick', () => onZoom?.(node));
+      row.addEventListener('dblclick', (e) => { e.preventDefault(); onZoom?.(node); });
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openCtxMenu(e.clientX, e.clientY, node);
+      });
       elByNode.set(node, row);
+      syncRow(node);
       container.appendChild(row);
     }
     return hits;
@@ -376,6 +519,7 @@ export function createTree(container, opts = {}) {
     reveal,
     search,
     clearSelection,
+    showAll,
     get mode() { return mode; },
     get root() { return root; },
   };

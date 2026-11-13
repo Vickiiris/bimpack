@@ -192,6 +192,7 @@ export async function batchGLTFScene(scene, opts = {}) {
           ? mesh.userData
           : (mesh.parent?.userData || {}),
         highlighted: false,
+        visible: true,
       };
       batch.userData.byInstance.set(instanceId, rec);
 

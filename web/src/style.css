@@ -113,8 +113,7 @@ html, body {
 }
 .panel-x:hover { background: #f2f4f7; color: var(--text); }
 
-/* ---------- 三栏布局 ---------- */
-.layout {
+/* ---------- 三栏布局 ---------- */.layout {
   height: calc(100vh - 56px);
   display: grid;
   grid-template-columns: 288px minmax(0, 1fr) 336px;
@@ -149,14 +148,24 @@ html, body {
 }
 
 /* ---------- 层级树 ---------- */
-.tree-search { padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+.tree-search {
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 6px;
+}
 .tree-search input {
-  width: 100%; font: inherit; font-size: 12.5px;
+  flex: 1; min-width: 0; font: inherit; font-size: 12.5px;
   padding: 5px 9px; border-radius: 6px;
   border: 1px solid var(--line); background: #fbfbfc;
   color: var(--text); outline: none;
 }
 .tree-search input:focus { border-color: var(--accent); background: #fff; }
+.ph-btn {
+  flex: none; font: inherit; font-size: 11.5px; font-weight: 500;
+  padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: #fbfbfc;
+  color: var(--muted); cursor: pointer;
+}
+.ph-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
 .tree-body {
   flex: 1; overflow: auto; padding: 6px 0 40px;
@@ -187,6 +196,17 @@ html, body {
 .node-caret.open { transform: rotate(90deg); }
 .node-caret.leaf { visibility: hidden; }
 
+/* 显示/隐藏复选框：勾选=显示，取消=隐藏 */
+.node-vis {
+  flex: none; width: 12px; height: 12px; margin: 0 1px;
+  accent-color: var(--accent); cursor: pointer;
+}
+
+/* 隐藏态：整行变灰 + 删除线；部分隐藏的组：斜体变灰 */
+.node.hidden .node-name { color: #b3b9c4; text-decoration: line-through; }
+.node.hidden .node-icon { color: #ccd1d9; }
+.node.partial .node-name { color: #9aa2b0; font-style: italic; }
+
 .node-icon { flex: none; font-size: 10px; color: var(--faint); width: 12px; text-align: center; }
 .node-icon.mesh { color: var(--accent); }
 .node-icon.group { color: #b0b7c3; }
@@ -206,6 +226,16 @@ html, body {
 .node-children.open { display: block; }
 
 .tree-empty { padding: 22px 16px; color: var(--faint); text-align: center; font-size: 12.5px; }
+
+/* 树右键菜单 */
+.ctx-menu {
+  position: fixed; z-index: 1000; min-width: 104px;
+  background: #fff; border: 1px solid #d8dde5; border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.14);
+  padding: 4px; font-size: 12.5px;
+}
+.ctx-item { padding: 6px 12px; border-radius: 5px; cursor: pointer; color: #344054; }
+.ctx-item:hover { background: var(--accent-soft); color: var(--accent); }
 
 /* ---------- 视口 ---------- */
 .stage { position: relative; min-width: 0; background: #eef0f4; overflow: hidden; }
