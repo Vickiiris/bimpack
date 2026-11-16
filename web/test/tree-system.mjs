@@ -43,17 +43,29 @@ const groups = await p.evaluate(() => {
 console.log('系统分组', JSON.stringify(groups, null, 1));
 
 const names = groups.map((g) => g.name).sort();
-assert(names.join(',') === 'CN,CR,CWP,QQ', `按缩写归类：${names.join(' / ')}（CN 变体 + cn-9 合并为 CN）`);
+assert(names.join(',') === 'CN,CR,CWP,EAD,QQ,XX', `按缩写归类：${names.join(' / ')}`);
 
-// 缩写后面要跟中文系统名：内置对照命中 + 表里没有时用类型名兜底
-const cnHint = groups.find((g) => g.name === 'CN');
-assert(cnHint.hint === '冷凝水' && cnHint.hintFrom === 'dict', `CN 后显示中文名「${cnHint?.hint}」（内置对照）`);
-const cwpHint = groups.find((g) => g.name === 'CWP');
-assert(cwpHint.hint === '冷却水泵' && cwpHint.hintFrom === 'dict', `CWP 后显示「${cwpHint?.hint}」`);
-const qqHint = groups.find((g) => g.name === 'QQ');
-assert(qqHint.hint === '特殊管' && qqHint.hintFrom === 'data', `未登记缩写 QQ 用类型名兜底显示「${qqHint?.hint}」`);
+const byName = (n) => groups.find((g) => g.name === n);
 
-const cn = groups.find((g) => g.name === 'CN');
+// 中文名优先级 ①模型自带「系统类型」 —— 与属性面板的 系统类型 EAD-排风管 对齐
+const ead = byName('EAD');
+assert(ead.count === 2, `EAD 合并 2 个构件（EAD 5 / EAD 6），实际 ${ead?.count}`);
+assert(ead.hint === '排风管' && ead.hintFrom === 'sysType', `EAD 显示「${ead?.hint}」（来自系统类型 EAD-排风管）`);
+
+// ② 只有「系统分类」
+const xx = byName('XX');
+assert(xx.hint === '给水' && xx.hintFrom === 'sysCat', `XX 显示「${xx?.hint}」（来自系统分类）`);
+
+// ③ 内置对照表
+const cn = byName('CN');
+assert(cn.hint === '冷凝水' && cn.hintFrom === 'dict', `CN 显示「${cn?.hint}」（内置对照）`);
+const cwp = byName('CWP');
+assert(cwp.hint === '冷却水泵' && cwp.hintFrom === 'dict', `CWP 显示「${cwp?.hint}」（内置对照）`);
+
+// ④ 都没有 → 类型名兜底
+const qq = byName('QQ');
+assert(qq.hint === '特殊管' && qq.hintFrom === 'data', `QQ 显示「${qq?.hint}」（类型名兜底）`);
+
 assert(cn.count === 4, `CN 合并了 4 个构件（CN 5 / CN 7 / CN 15 / cn-9），实际 ${cn?.count}`);
 assert(cn.raws.length === 4, `CN 组保留了 4 种原始取值（悬浮可见），实际 ${cn?.raws.length}`);
 assert(cn.kids.includes('风管') && cn.kids.includes('管道'), `CN 下按类别分层：${cn?.kids.join(' / ')}`);
@@ -61,7 +73,6 @@ assert(cn.kids.includes('风管') && cn.kids.includes('管道'), `CN 下按类�
 const cr = groups.find((g) => g.name === 'CR');
 assert(cr.count === 1 && cr.raws[0] === 'CR 30,CR 18', '多系统值 "CR 30,CR 18" 归到 CR，不另立类别');
 
-const cwp = groups.find((g) => g.name === 'CWP');
 assert(cwp.count === 1 && cwp.raws[0] === 'CWP 3', 'CWP 3 归 CWP（编号不参与判定）');
 
 // 三级模式也存在且能建出三层

@@ -54,10 +54,39 @@ eq('12 34', '(未分类)', '纯数字带空格');
 eq('冷冻水', '冷冻水', '无英文缩写的中文值原样保留');
 eq('生活给水 JL 3', '生活给水 JL', '中文 + 缩写：保留到编号前');
 
+console.log('--- 优先用模型自带的「系统缩写」字段 ---');
+const { systemKey, stripAbbrPrefix } = await import('../src/viewer/tree.js');
+const k = (props, want, msg) => {
+  const got = systemKey(props);
+  const ok = got === want;
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} ${msg}：${JSON.stringify(props)} → ${JSON.stringify(got)}${ok ? '' : `（期望 ${want}）`}`);
+};
+k({ 系统缩写: 'EAD', 系统名称: 'EAD 5' }, 'EAD', '自带缩写优先，取字段而非解析系统名称');
+k({ 系统缩写: ' ead-5 ' }, 'EAD', '自带缩写带编号/空白也能收敛');
+k({ 系统名称: 'CN 5' }, 'CN', '没有自带缩写字时回落到系统名称解析');
+k({ 系统缩写: '', 系统名称: 'CR 30,CR 18' }, 'CR', '空字段视同没有');
+k({}, '(未分类)', '两个字段都没有');
+
+const sp = (v, abbr, want, msg) => {
+  const got = stripAbbrPrefix(v, abbr);
+  const ok = got === want;
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} ${msg}：${JSON.stringify(v)} → ${JSON.stringify(got)}${ok ? '' : `（期望 ${want}）`}`);
+};
+sp('EAD-排风管', 'EAD', '排风管', '系统类型去掉缩写前缀');
+sp('EAD 排风管', 'EAD', '排风管', '空格分隔');
+sp('EAD：排风管', 'EAD', '排风管', '中文冒号分隔');
+sp('排风管', 'EAD', '排风管', '没有前缀时原样返回');
+
 console.log('--- 分组模式注册 ---');
 const sys = GROUP_MODES.system;
 const sysType = GROUP_MODES.systemType;
-const okMode = sys?.fields?.[0]?.map === systemAbbr && sysType?.fields?.[0]?.map === systemAbbr;
+const m1 = sys?.fields?.[0]?.map;
+const m2 = sysType?.fields?.[0]?.map;
+const okMode = typeof m1 === 'function' && typeof m2 === 'function'
+  && m1('EAD 5', { 系统缩写: 'EAD', 系统名称: 'EAD 5' }) === 'EAD'
+  && m2('CN 7', { 系统名称: 'CN 7' }) === 'CN';
 if (!okMode) failed++;
 console.log(`${okMode ? '✓' : '✗'} 「系统 → 类别」与「系统 → 类别 → 类型」两档都用系统缩写归一`);
 const okDepth = sys?.fields?.length === 2 && sysType?.fields?.length === 3;

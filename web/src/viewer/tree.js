@@ -30,12 +30,15 @@ export const GROUP_MODES = {
   },
   system: {
     label: '系统（缩写） → 类别',
-    fields: [{ key: '系统名称', map: systemAbbr, label: '系统' }, { key: 'Category Name' }],
+    fields: [
+      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
+      { key: 'Category Name' },
+    ],
   },
   systemType: {
     label: '系统（缩写） → 类别 → 类型',
     fields: [
-      { key: '系统名称', map: systemAbbr, label: '系统' },
+      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
       { key: 'Category Name' },
       { key: 'Type Name' },
     ],
@@ -52,6 +55,35 @@ export const GROUP_MODES = {
 };
 
 const clean = (v) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+
+/**
+ * 分类键（系统层的唯一归并依据），优先用模型自带的字段：
+ *   1. `系统缩写` —— 有的导出直接给（如 "EAD"），最可靠，直接用
+ *   2. 没有这个字段时才解析 `系统名称`（"EAD 5" → EAD）
+ * 缩写后的编号一律不参与判定。
+ */
+export function systemKey(props) {
+  const p = props || {};
+  const explicit = clean(p['系统缩写']);
+  if (explicit) {
+    // 自带缩写也可能带编号/多余符号："EAD-5" → EAD
+    const t = explicit.replace(/[\s._-]*[A-Za-z]*\d[A-Za-z0-9]*\s*$/g, '').replace(/[\s._-]+$/g, '').trim();
+    if (t) return t.toUpperCase();
+  }
+  return systemAbbr(p['系统名称']);
+}
+
+/** 把 "EAD-排风管" 里的缩写前缀去掉，只留中文系统名 → "排风管" */
+export function stripAbbrPrefix(value, abbr) {
+  let s = clean(value);
+  if (!s) return '';
+  const a = clean(abbr);
+  if (a) {
+    const re = new RegExp(`^${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[-—_:：/|·]?\\s*`, 'i');
+    s = s.replace(re, '');
+  }
+  return s.trim();
+}
 
 /**
  * 系统名称 → 系统缩写（层级树「系统」层的唯一分类键）
@@ -170,7 +202,7 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
       const key = typeof f === 'string' ? f : f.key;
       const rawVal = clean(leaf.props[key]);
       // 分类键：有 map 就用归一化结果（如系统缩写），否则用原值
-      const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal))) || '(未分类)';
+      const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props))) || '(未分类)';
 
       let m = maps.get(parent);
       if (!m) { m = new Map(); maps.set(parent, m); }
@@ -182,7 +214,9 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
           field: key, fieldLabel: (typeof f === 'string' ? key : f.label) || key,
           raws: new Set(),   // 归到这个分类键下的原始取值（悬浮提示里给用户看）
           mapped: !!(typeof f !== 'string' && f.map), // 分类键是归一化出来的（如系统缩写）
-          typeFreq: new Map(), // 该组下各「类型」出现次数（给中文系统名兜底用）
+          typeFreq: new Map(),  // 该组下各「类型」出现次数（给中文系统名兜底用）
+          sysTypeFreq: new Map(), // 「系统类型」取值次数（如 "EAD-排风管"）
+          sysCatFreq: new Map(),  // 「系统分类」取值次数（如 "排风"）
         };
         m.set(label, g);
         parent.children.push(g);
@@ -190,6 +224,13 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
       if (rawVal) g.raws.add(rawVal);
       const tn = clean(leaf.props['Type Name']);
       if (tn) g.typeFreq.set(tn, (g.typeFreq.get(tn) || 0) + 1);
+      if (g.mapped) {
+        // 模型自带的系统语义字段：优先拿来当中文名（比缩写对照表可靠）
+        const st = clean(leaf.props['系统类型']);
+        if (st) g.sysTypeFreq.set(st, (g.sysTypeFreq.get(st) || 0) + 1);
+        const sc = clean(leaf.props['系统分类']);
+        if (sc) g.sysCatFreq.set(sc, (g.sysCatFreq.get(sc) || 0) + 1);
+      }
       g.count++;
       parent = g;
     }
@@ -214,12 +255,23 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
   };
   const assignHint = (n) => {
     if (n.isGroup && n.mapped) {
+      // ① 模型自带「系统类型」：去掉缩写前缀即中文名（"EAD-排风管" → "排风管"）
+      const sysType = stripAbbrPrefix(topType(n.sysTypeFreq), n.name);
+      // ② 模型自带「系统分类」：如「排风」
+      const sysCat = topType(n.sysCatFreq);
+      // ③ 内置缩写对照表
       const dict = systemName(n.name);
-      if (dict) { n.hint = dict; n.hintFrom = 'dict'; }
-      else {
-        const t = topType(n.typeFreq);
-        if (t) { n.hint = t; n.hintFrom = 'data'; }
-      }
+      // ④ 该组最常见的构件「类型」名
+      const typeName = topType(n.typeFreq);
+
+      if (sysType) { n.hint = sysType; n.hintFrom = 'sysType'; }
+      else if (sysCat) { n.hint = sysCat; n.hintFrom = 'sysCat'; }
+      else if (dict) { n.hint = dict; n.hintFrom = 'dict'; }
+      else if (typeName) { n.hint = typeName; n.hintFrom = 'data'; }
+
+      // 系统类型 / 系统分类 的原值都留着，悬浮时给出完整对应关系
+      if (n.sysTypeFreq.size) n.sysTypeNames = [...n.sysTypeFreq.keys()];
+      if (n.sysCatFreq.size) n.sysCatNames = [...n.sysCatFreq.keys()];
     }
     for (const c of n.children) assignHint(c);
   };
@@ -402,14 +454,21 @@ export function createTree(container, opts = {}) {
     if (node.isGroup && (node.hint || node.raws?.size > 1)) {
       const parts = [];
       if (node.hint) {
-        const src = node.hintFrom === 'dict' ? '内置对照' : '按类型名推断';
+        const src = {
+          sysType: '模型自带「系统类型」',
+          sysCat: '模型自带「系统分类」',
+          dict: '内置缩写对照表',
+          data: '按该组常见类型名推断',
+        }[node.hintFrom] || '推断';
         parts.push(`${node.name}（${node.hint}，来源：${src}）`);
       } else {
         parts.push(`${node.fieldLabel || '分组'}「${node.name}」`);
       }
+      if (node.sysCatNames?.length) parts.push(`系统分类：${node.sysCatNames.slice(0, 6).join('、')}`);
+      if (node.sysTypeNames?.length) parts.push(`系统类型：${node.sysTypeNames.slice(0, 6).join('、')}`);
       if (node.raws?.size > 1) {
         const list = [...node.raws];
-        parts.push(`${list.length} 种原始取值：`
+        parts.push(`系统名称（${list.length} 种）：`
           + list.slice(0, 20).join('、')
           + (list.length > 20 ? ` …等 ${list.length} 种` : ''));
       }
@@ -442,7 +501,12 @@ export function createTree(container, opts = {}) {
       const hint = document.createElement('span');
       hint.className = 'node-hint';
       hint.textContent = node.hint;
-      hint.title = node.hintFrom === 'dict' ? '内置缩写对照表' : '按该组最常见的类型名推断';
+      hint.title = {
+        sysType: '来自模型属性「系统类型」',
+        sysCat: '来自模型属性「系统分类」',
+        dict: '来自内置缩写对照表',
+        data: '按该组最常见的类型名推断',
+      }[node.hintFrom] || '';
       row.appendChild(hint);
     }
 
