@@ -39,8 +39,11 @@ const cases = [
   // 电气 / 智能化：同类别（电缆桥架），不同专业
   { name: '强电桥架 AL 1', sys: 'AL 1', abbr: 'AL', sysCat: '强电', cat: '电缆桥架', type: '槽式桥架', x: 12 },
   { name: '弱电桥架 1', sys: '弱电 1', sysCat: '弱电', cat: '电缆桥架', type: '槽式桥架', x: 14 },
+  // 给排水：缩写 NW 在别处常指 network，这里实际是空调凝结水 + 坡道雨水
+  // （回归：不能被缩写表拉去智能化，也不能被「空调」两字拉去暖通）
+  { name: '凝结水管 NW 1', sys: 'NW 1', abbr: 'NW', sysType: 'NW-空调凝结水、坡道雨水', sysCat: '排水', cat: '管道', type: '镀锌钢管', x: 16 },
   // 建筑：无任何系统字段
-  { name: '基本墙 1', cat: '墙', fam: '基本墙', type: '200mm 砌体', x: 16 },
+  { name: '基本墙 1', cat: '墙', fam: '基本墙', type: '200mm 砌体', x: 18 },
 ];
 
 for (const c of cases) {

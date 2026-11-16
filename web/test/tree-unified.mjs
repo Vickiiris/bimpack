@@ -54,13 +54,19 @@ const info = await p.evaluate(() => {
 });
 
 const names = info.top.map((t) => t.name).sort();
-assert(names.join('|') === '消防|暖通空调|电气|智能化|建筑'.split('|').sort().join('|'),
+assert(names.join('|') === '消防|暖通空调|给排水|电气|智能化|建筑'.split('|').sort().join('|'),
   `第一层是专业：${names.join(' / ')}`);
 
 const byName = (n) => info.top.find((t) => t.name === n);
 assert(byName('消防')?.count === 4, `消防 4 件（PY×2 + 喷淋 + 消火栓），实际 ${byName('消防')?.count}`);
 assert(byName('暖通空调')?.count === 2, `暖通空调 2 件（送风 + 冷冻水），实际 ${byName('暖通空调')?.count}`);
+assert(byName('给排水')?.count === 1, `给排水 1 件（NW 凝结水+雨水），实际 ${byName('给排水')?.count}`);
 assert(byName('电气')?.count === 1 && byName('智能化')?.count === 1, '电气 / 智能化各 1 件（同类别桥架，按专业分开）');
+
+// 回归：缩写 NW 在别处常指 network，但这套模型的系统类型写明是空调凝结水+坡道雨水
+const plumb = info.tree.find((t) => t.name === '给排水');
+assert(plumb.kids.map((c) => c.name).join('|') === 'NW', `给排水下是 NW 系统：${plumb.kids.map((c) => c.name).join(' / ')}`);
+assert(!info.tree.find((t) => t.name === '智能化').kids.some((c) => c.name === 'NW'), 'NW 没有被缩写表拉进智能化');
 assert(byName('建筑')?.count === 1, '建筑 1 件（无系统字段的墙）');
 
 // 消防优先：排烟风管进消防，不因「类别=风管」被拉去暖通
@@ -88,7 +94,7 @@ const arch = info.tree.find((t) => t.name === '建筑');
 assert(arch.kids[0]?.name === '墙', `建筑下直接是类别：${arch.kids[0]?.name}（系统层已折叠）`);
 
 // 不重不漏
-assert(info.leafCount === 9 && info.recTotal === 9,
+assert(info.leafCount === 10 && info.recTotal === 10,
   `叶子 ${info.leafCount} 个 = 构件 ${info.recTotal} 个（不重不漏）`);
 
 assert(errs.length === 0, `无页面报错${errs.length ? '：' + errs.join(' | ') : ''}`);

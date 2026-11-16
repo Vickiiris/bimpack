@@ -35,6 +35,20 @@ eq({ 系统名称: '弱电 1', 'Category Name': '电缆桥架' }, 'ELV', '弱电
 eq({ 系统名称: '燃气 1', 'Category Name': '管道' }, 'GAS', '燃气 → 燃气');
 eq({ 系统名称: '冷凝水 2', 'Category Name': '管道' }, 'HVAC', '冷凝水 → 暖通');
 
+console.log('--- 系统中文语义优先于缩写（NW 误判成智能化的回归）---');
+eq({ 系统缩写: 'NW', 系统分类: '排水', 系统类型: 'NW-空调凝结水、坡道雨水', 'Category Name': '管道' }, 'PLUMB',
+  'NW = 空调凝结水+坡道雨水 → 给排水（不是智能化）');
+eq({ 系统类型: 'NW-空调凝结水、坡道雨水', 'Category Name': '管道' }, 'PLUMB',
+  '即使没有系统分类，混合水系统也按排水');
+eq({ 系统缩写: 'NW', 'Category Name': '管道' }, 'PLUMB', '缩写 NW 不再当网络，回落到类别');
+eq({ 系统类型: '空调冷凝水', 'Category Name': '管道' }, 'HVAC', '纯冷凝水系统仍归暖通');
+eq({ 系统类型: '网络', 'Category Name': '电缆桥架' }, 'ELV', '真正的网络系统仍归智能化');
+eq({ 系统分类: '入侵报警', 'Category Name': '电缆桥架' }, 'ELEC', '入侵报警不当消防（裸「报警」已从消防词里去掉）');
+eq({ 系统分类: '火灾报警', 'Category Name': '电缆桥架' }, 'FIRE', '火灾报警仍是消防');
+eq({ 系统名称: '生活热水 1', 'Category Name': '管道' }, 'PLUMB', '生活热水 → 给排水');
+eq({ 系统类型: 'CHW-冷冻水', 'Category Name': '管道' }, 'HVAC', '系统类型写明冷冻水就按语义走');
+eq({ 系统类型: 'PY-排烟风管', 系统缩写: 'PY', 'Category Name': '风管' }, 'FIRE', '排烟风管仍归消防');
+
 console.log('--- 无系统字段：靠类别/族 ---');
 eq({ 'Category Name': '墙', 族: '基本墙' }, 'ARCH', '墙 → 建筑');
 eq({ 'Category Name': '结构框架', 族: 'HW-矩形梁' }, 'STR', '结构框架 → 结构');
@@ -51,6 +65,12 @@ console.log('--- 表结构自检 ---');
 const bad = Object.entries(ABBR_DISCIPLINE).filter(([k, v]) => k !== k.toUpperCase() || !disciplineName(v));
 if (bad.length) failed++;
 console.log(`${bad.length ? '✗' : '✓'} 缩写表的键都是大写且专业代码有效（${Object.keys(ABBR_DISCIPLINE).length} 条）`);
+
+// 有歧义的缩写不许再进表 —— NW 这次就是把凝结水认成网络的元凶
+const RISKY = ['NW', 'W', 'FS', 'TR', 'HW', 'HWS', 'HWR', 'QT', 'SSP', 'FFS', 'WSF'];
+const leaked = RISKY.filter((k) => k in ABBR_DISCIPLINE);
+if (leaked.length) failed++;
+console.log(`${leaked.length ? '✗' : '✓'} 含义不稳定的缩写没有进表${leaked.length ? '：' + leaked.join(',') : `（已排除 ${RISKY.join(' ')}）`}`);
 console.log(`${POLICY.fireFirst ? '✓' : '✗'} 默认策略：消防优先单列（GB 55037 口径）`);
 console.log(`${disciplineName('HVAC') === '暖通空调' ? '✓' : '✗'} 专业名可反查（HVAC → 暖通空调）`);
 

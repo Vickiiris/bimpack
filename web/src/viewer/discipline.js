@@ -24,10 +24,14 @@
  *   ② **消防优先**：任一系统字段或类别含消防/排烟/喷淋/火警等词 → 消防
  *      （排烟风管属暖通设备、喷淋属给排水管材，但按 GB 55037 与消防各专项验收规范
  *        必须单列成独立系统，不能拆散到暖通/给排水里）
- *   ③ 系统缩写 → 专业（内置表，见 ABBR_DISCIPLINE）
- *   ④ 系统分类 / 系统类型 / 系统名称 的中文关键词
- *   ⑤ 类别（Category Name）/ 族 的中文关键词（无系统字段的建筑结构模型走这里）
- *   ⑥ 都没有 → (未分类)
+ *   ③ **系统中文语义**（系统分类 / 系统类型 / 系统名称）按命中词数打分取最高分
+ *      —— 这一级刻意排在缩写**之前**：`系统类型 = NW-空调凝结水、坡道雨水` 是模型
+ *      自己写的权威口径，而 `NW` 只是某个院自定的代号（别处可能真指 network）。
+ *      特例：同一系统里既有空调类词又有排水类词（雨水/污水/废水/排水/中水）→ 按排水。
+ *   ④ 系统缩写 → 专业（内置表 ABBR_DISCIPLINE，只收含义稳定的，作兜底）
+ *   ⑤ 兜底：系统名里的泛词 → 构件类别的强词 → 类别 / 族 的泛词
+ *      （没有系统字段的建筑结构模型走这里）
+ *   ⑥ 都没有 → (未分类)，不瞎猜
  */
 
 import { cleanText, systemKey } from './system-key.js';
@@ -50,52 +54,63 @@ export const disciplineName = (code) => DISCIPLINES[code]?.name || DISCIPLINES.N
 
 /**
  * 系统缩写 → 专业。
- * 只放**含义稳定**的缩写；CR / CS / F 这类不同设计院口径不一的刻意不放，
- * 留给关键词与数据自身说法，避免替用户拍板（同 system-names.js 的处理原则）。
+ *
+ * 原则：**只放含义稳定的缩写**。缩写是各设计院自定的代号，同一个 `NW`
+ * 有的指网络、有的指凝结水，硬编码等于替用户拍板，错了还错得理直气壮。
+ * 所以这张表只作「模型没给中文语义时」的兜底（见 disciplineCode ④），
+ * 并且已经从早先的 77 条收紧——删掉了 `NW` `W` `FS` `TR` `HW` `HWS` `HWR`
+ * `QT` `SSP` `FFS` `WSF` 这些有歧义的（`NW` 就是把「空调凝结水、坡道雨水」
+ * 误判成智能化的直接原因）。
+ * 要按某个项目的口径固化，在项目里改这张表即可。
  */
 export const ABBR_DISCIPLINE = {
-  // 暖通空调（含水系统：冷冻水/冷却水/冷凝水，按惯例归暖通而非给排水）
+  // 暖通空调（冷冻水 / 冷却水 / 冷凝水，按惯例随暖通）
   CHW: 'HVAC', CHWS: 'HVAC', CHWR: 'HVAC',
   CW: 'HVAC', CWS: 'HVAC', CWR: 'HVAC', CWP: 'HVAC', CWPU: 'HVAC',
   CN: 'HVAC', CND: 'HVAC',
   AHU: 'HVAC', PAU: 'HVAC', MAU: 'HVAC', FCU: 'HVAC', VRV: 'HVAC', VRF: 'HVAC',
-  SF: 'HVAC', PF: 'HVAC', EAF: 'HVAC', SAF: 'HVAC', KEF: 'HVAC',
-  HVAC: 'HVAC', KT: 'HVAC', HWS: 'HVAC', HWR: 'HVAC', HW: 'HVAC',
+  SF: 'HVAC', PF: 'HVAC', EAF: 'HVAC', SAF: 'HVAC', KEF: 'HVAC', HVAC: 'HVAC', KT: 'HVAC',
   // 给排水
   J: 'PLUMB', JS: 'PLUMB', JL: 'PLUMB', JSL: 'PLUMB',
-  WS: 'PLUMB', PW: 'PLUMB', WW: 'PLUMB', YW: 'PLUMB', W: 'PLUMB',
-  ZW: 'PLUMB', RW: 'PLUMB', PL: 'PLUMB', WSF: 'PLUMB', FS: 'PLUMB',
+  WS: 'PLUMB', PW: 'PLUMB', WW: 'PLUMB', YW: 'PLUMB',
+  ZW: 'PLUMB', RW: 'PLUMB', PL: 'PLUMB',
   // 消防（排烟 PY、防烟 FY、喷淋 SP、消火栓 XH、火灾报警 FAS）
-  XH: 'FIRE', XHS: 'FIRE', SP: 'FIRE', SSP: 'FIRE', ZP: 'FIRE',
-  PY: 'FIRE', FY: 'FIRE', FAS: 'FIRE', FFS: 'FIRE', QT: 'FIRE', YJ: 'FIRE',
+  XH: 'FIRE', XHS: 'FIRE', SP: 'FIRE', ZP: 'FIRE',
+  PY: 'FIRE', FY: 'FIRE', FAS: 'FIRE', YJ: 'FIRE',
   // 电气
   AL: 'ELEC', EL: 'ELEC', DL: 'ELEC', LD: 'ELEC', PD: 'ELEC',
-  WL: 'ELEC', TR: 'ELEC', GEN: 'ELEC', UPS: 'ELEC', MEB: 'ELEC', LEB: 'ELEC',
+  WL: 'ELEC', GEN: 'ELEC', UPS: 'ELEC', MEB: 'ELEC', LEB: 'ELEC',
   BUS: 'ELEC', CBL: 'ELEC',
-  // 智能化 / 弱电
+  // 智能化 / 弱电（不含 NW —— 见上面的说明）
   ELV: 'ELV', IT: 'ELV', BA: 'ELV', CCTV: 'ELV', CATV: 'ELV',
-  TEL: 'ELV', NW: 'ELV', IBMS: 'ELV', PDS: 'ELV',
+  TEL: 'ELV', IBMS: 'ELV', PDS: 'ELV',
   // 燃气
   GAS: 'GAS', NG: 'GAS', RQ: 'GAS', MQ: 'GAS',
 };
 
-/** 关键词 → 专业。按数组顺序匹配，消防排在最前（消防优先） */
-const KEYWORDS = [
-  ['FIRE', ['消防', '喷淋', '消火栓', '消火', '排烟', '防烟', '防火', '火警', '火灾',
-    '报警', '灭火', '疏散', '应急照明', 'fire', 'sprinkler', 'smoke']],
+/**
+ * 强关键词：描述「这个系统是干什么的」，只在系统口径的字段里找。
+ * 命中多个专业时**按命中个数打分**取最高分 —— 一个系统名里可能同时出现
+ * 「空调」和「雨水」（如 NW = 空调凝结水 + 坡道雨水），单条命中不足以定性。
+ */
+const STRONG = [
   ['HVAC', ['暖通', '采暖', '供暖', '空调', '通风', '新风', '送风', '回风', '排风',
-    '冷冻水', '冷却水', '冷凝水', '风机', '风管', '风道', '冷媒', '多联机', '地暖',
-    'hvac', 'duct', 'air']],
-  ['PLUMB', ['给排水', '给水', '排水', '污水', '废水', '雨水', '中水', '生活水',
-    '热水', '饮用水', '管道', '水管', '卫生器具', '地漏', '水泵', '水表',
-    'plumb', 'water', 'drain', 'pipe']],
+    '冷冻水', '冷却水', '冷凝水', '凝结水', '冷媒', '多联机', '地暖', '风系统']],
+  ['PLUMB', ['给排水', '给水', '排水', '污水', '废水', '中水', '生活水', '生活热水',
+    '热水', '饮用水', '雨水', '卫生器具', '地漏', '水表', '压力排水']],
   ['ELEC', ['电气', '强电', '配电', '变电', '照明', '动力', '桥架', '电缆', '母线',
-    '开关柜', '配电箱', '插座', '接地', '防雷', '发电',
-    'electric', 'cable', 'power', 'light']],
+    '开关柜', '配电箱', '插座', '接地', '防雷', '发电', '低压', '高压']],
   ['ELV', ['智能化', '弱电', '网络', '综合布线', '监控', '门禁', '广播', '安防',
-    '信息', '电视', '电话', '楼控',
-    'elv', 'network', 'cctv']],
-  ['GAS', ['燃气', '天然气', '煤气', 'gas']],
+    '信息', '电视', '电话', '楼控', '停车']],
+  ['GAS', ['燃气', '天然气', '煤气']],
+];
+
+/** 弱关键词：构件层面的词，只在系统和缩写都没给出答案时才用 */
+const WEAK = [
+  ['HVAC', ['风机', '风管', '风道', '风阀', '风口', '冷机', '盘管', '冷却塔']],
+  ['PLUMB', ['管道', '水管', '水阀', '水泵', '水箱', '阀门', '洁具']],
+  ['ELEC', ['灯具', '灯', '开关', '线管']],
+  ['ELV', ['摄像头', '信息点', '弱电箱']],
   ['ARCH', ['建筑', '墙', '门', '窗', '楼板', '楼梯', '栏杆', '扶手', '扶栏', '幕墙',
     '屋顶', '家具', '装修', '吊顶', '坡道', '散水', '台阶', '雨棚', '顶棚',
     'wall', 'door', 'window', 'floor', 'slab', 'stair']],
@@ -104,10 +119,49 @@ const KEYWORDS = [
     'beam', 'column', 'foundation', 'truss']],
 ];
 
-function keywordDiscipline(text) {
+/** 消防强词。刻意不收裸「报警」—— 入侵报警、防盗报警属安防（智能化） */
+const FIRE_STRONG = ['消防', '喷淋', '消火栓', '消火', '排烟', '防烟', '防火',
+  '火警', '火灾', '灭火', '应急照明', '疏散', 'fire', 'sprinkler', 'smoke'];
+
+/** 排水类词：一个系统里同时出现「空调类 + 排水类」时按排水处理（见 disciplineCode ③） */
+const DRAIN = ['雨水', '污水', '废水', '排水', '中水', '地漏'];
+
+/** 打分相同时的倾向顺序（制备冷热水的系统优先于零散命中的专业） */
+const ORDER = ['HVAC', 'PLUMB', 'ELEC', 'ELV', 'GAS', 'ARCH', 'STR'];
+
+const has = (text, words) => {
+  const s = cleanText(text).toLowerCase();
+  return !!s && words.some((w) => s.includes(w));
+};
+
+function scoreStrong(text) {
+  const s = cleanText(text).toLowerCase();
+  const score = new Map();
+  if (!s) return score;
+  for (const [code, words] of STRONG) {
+    for (const w of words) {
+      if (s.includes(w)) score.set(code, (score.get(code) || 0) + 1);
+    }
+  }
+  return score;
+}
+
+function bestOf(score) {
+  let best = '';
+  let max = 0;
+  for (const [code, n] of score) {
+    if (n > max || (n === max && ORDER.indexOf(code) < ORDER.indexOf(best))) {
+      best = code;
+      max = n;
+    }
+  }
+  return best;
+}
+
+function scoreWeak(text) {
   const s = cleanText(text).toLowerCase();
   if (!s) return '';
-  for (const [code, words] of KEYWORDS) {
+  for (const [code, words] of WEAK) {
     for (const w of words) if (s.includes(w)) return code;
   }
   return '';
@@ -151,53 +205,46 @@ export function disciplineCode(props, opts = {}) {
   const fam = cleanText(p['族']) || cleanText(p['Family Name']);
   const abbr = systemKey(p);
 
+  const sysText = [sysCat, sysType, sysName].join(' '); // 系统口径
+  const compText = [cat, fam].join(' ');                // 构件口径
+  const allText = `${sysText} ${compText}`;
+
   // ① 模型自带专业字段
   const explicit = cleanText(p['专业']) || cleanText(p['专业名称']);
   if (explicit) {
-    const hit = keywordDiscipline(explicit);
-    if (hit) return hit;
+    if (has(explicit, FIRE_STRONG)) return fireFirst ? 'FIRE' : (fireHostOf(explicit) || 'FIRE');
+    const b = bestOf(scoreStrong(explicit));
+    if (b) return b;
+    const w = scoreWeak(explicit);
+    if (w) return w;
   }
 
-  // 消防词归一：fireFirst 时一律归消防，否则回到它所属的实体专业
-  const allText = [sysCat, sysType, sysName, cat, fam].join(' ');
-  const kd = (text) => {
-    const code = keywordDiscipline(text);
-    if (code === 'FIRE' && !fireFirst) return fireHostOf(text || allText) || 'FIRE';
-    return code;
-  };
-
-  // ② 消防优先：系统口径先看（构件口径放到 ⑤ 之后兜底）
-  if (fireFirst) {
-    for (const v of [sysCat, sysType, sysName]) {
-      if (keywordDiscipline(v) === 'FIRE') return 'FIRE';
-    }
+  // ② 消防优先：系统字段和构件字段都看（消防是职能口径，跨专业存在）
+  if (has(allText, FIRE_STRONG)) {
+    return fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE');
   }
 
-  // ③ 系统缩写
+  // ③ 系统中文语义 —— **比缩写可靠**：模型自己写的「系统分类 / 系统类型」是权威口径，
+  //    缩写只是各院自定的代号（同一个 NW，有的指网络，有的指凝结水）。
+  const sc = scoreStrong(sysText);
+  // 混合水系统：同时含空调类词和排水类词 → 按排水（它是把水排走的系统，
+  // 而不是制备冷热水的系统）。例：NW = 空调凝结水 + 坡道雨水。
+  if (has(sysText, DRAIN) && (sc.get('HVAC') || 0) > 0) return 'PLUMB';
+  const best = bestOf(sc);
+  if (best) return best;
+
+  // ④ 系统缩写（模型没给中文语义时才兜底）
   if (abbr && abbr !== '(未分类)' && ABBR_DISCIPLINE[abbr]) {
-    const code = ABBR_DISCIPLINE[abbr];
-    if (code !== 'FIRE' || fireFirst) return code;
-    return fireHostOf(allText) || 'FIRE';
+    return ABBR_DISCIPLINE[abbr];
   }
 
-  // ④ 系统中文名
-  for (const v of [sysCat, sysType, sysName]) {
-    const hit = kd(v);
-    if (hit) return hit;
-  }
-
-  // ⑤ 构件分类
-  for (const v of [cat, fam]) {
-    const hit = kd(v);
-    if (hit) return hit;
-  }
-
-  // ⑥ 消防兜底：类别里带消防词（如「消防水泵」类别在给排水专业下）
-  if (fireFirst) {
-    for (const v of [cat, fam, sysCat, sysType, sysName]) {
-      if (cleanText(v).includes('消防')) return 'FIRE';
-    }
-  }
+  // ⑤ 兜底：系统名里的泛词 → 构件类别上的强词（如「电缆桥架」）→ 构件泛词
+  const weakSys = scoreWeak(sysText);
+  if (weakSys) return weakSys;
+  const strongComp = bestOf(scoreStrong(compText));
+  if (strongComp) return strongComp;
+  const weakComp = scoreWeak(compText);
+  if (weakComp) return weakComp;
 
   return 'NONE';
 }
