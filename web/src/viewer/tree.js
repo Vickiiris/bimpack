@@ -18,6 +18,7 @@
  */
 
 import { setVisible } from './bim-batch.js';
+import { systemName } from './system-names.js';
 
 const MAX_CHILDREN_RENDER = 800;
 
@@ -180,11 +181,15 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
           recs: null, hasMesh: false, isGroup: true, count: 0,
           field: key, fieldLabel: (typeof f === 'string' ? key : f.label) || key,
           raws: new Set(),   // 归到这个分类键下的原始取值（悬浮提示里给用户看）
+          mapped: !!(typeof f !== 'string' && f.map), // 分类键是归一化出来的（如系统缩写）
+          typeFreq: new Map(), // 该组下各「类型」出现次数（给中文系统名兜底用）
         };
         m.set(label, g);
         parent.children.push(g);
       }
       if (rawVal) g.raws.add(rawVal);
+      const tn = clean(leaf.props['Type Name']);
+      if (tn) g.typeFreq.set(tn, (g.typeFreq.get(tn) || 0) + 1);
       g.count++;
       parent = g;
     }
@@ -198,6 +203,28 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     for (const c of n.children) if (c.children.length) sortDeep(c);
   };
   sortDeep(root);
+
+  // 给归一化出来的分组（如系统缩写）补中文名：
+  // 先查内置对照表，查不到就用该组里出现最多的「类型」兜底 —— 不凭空造名字
+  const topType = (freq) => {
+    let best = '';
+    let max = 0;
+    for (const [k, v] of freq) if (v > max) { best = k; max = v; }
+    return best;
+  };
+  const assignHint = (n) => {
+    if (n.isGroup && n.mapped) {
+      const dict = systemName(n.name);
+      if (dict) { n.hint = dict; n.hintFrom = 'dict'; }
+      else {
+        const t = topType(n.typeFreq);
+        if (t) { n.hint = t; n.hintFrom = 'data'; }
+      }
+    }
+    for (const c of n.children) assignHint(c);
+  };
+  assignHint(root);
+
   return root;
 }
 
@@ -372,12 +399,21 @@ export function createTree(container, opts = {}) {
     row.className = 'node' + (node.isGroup ? ' is-group' : '');
     row.style.paddingLeft = `${node.depth * 13 + 2}px`;
     // 分组节点：把归一化前的一串原始取值列在悬浮提示里（如 CN 5 / CN 7 / CN 15 → CN）
-    if (node.isGroup && node.raws?.size > 1) {
-      const list = [...node.raws];
-      row.title = `${node.fieldLabel || '分组'}「${node.name}」`
-        + `（${list.length} 种原始取值）\n`
-        + list.slice(0, 20).join('、')
-        + (list.length > 20 ? ` …等 ${list.length} 种` : '');
+    if (node.isGroup && (node.hint || node.raws?.size > 1)) {
+      const parts = [];
+      if (node.hint) {
+        const src = node.hintFrom === 'dict' ? '内置对照' : '按类型名推断';
+        parts.push(`${node.name}（${node.hint}，来源：${src}）`);
+      } else {
+        parts.push(`${node.fieldLabel || '分组'}「${node.name}」`);
+      }
+      if (node.raws?.size > 1) {
+        const list = [...node.raws];
+        parts.push(`${list.length} 种原始取值：`
+          + list.slice(0, 20).join('、')
+          + (list.length > 20 ? ` …等 ${list.length} 种` : ''));
+      }
+      row.title = parts.join('\n');
     } else {
       row.title = node.name;
     }
@@ -400,6 +436,15 @@ export function createTree(container, opts = {}) {
     name.className = 'node-name';
     name.textContent = node.name;
     row.appendChild(name);
+
+    // 系统分组的中文名跟在缩写后面（CN 5 / CN 7 → CN 冷凝水）
+    if (node.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'node-hint';
+      hint.textContent = node.hint;
+      hint.title = node.hintFrom === 'dict' ? '内置缩写对照表' : '按该组最常见的类型名推断';
+      row.appendChild(hint);
+    }
 
     if (node.isGroup) {
       const meta = document.createElement('span');

@@ -216,6 +216,14 @@ html, body {
   min-width: 0; flex: 1;
 }
 .node.is-group .node-name { color: #475467; font-weight: 550; }
+
+/* 系统分组后面的中文名：CN 冷凝水 */
+.node-hint {
+  flex: 0 1 auto; min-width: 0; max-width: 46%;
+  margin-left: 4px;
+  color: #98a2b3; font-size: 11px; font-weight: 400;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .node-meta {
   color: var(--faint); font-size: 11px; flex: none;
   font-variant-numeric: tabular-nums;

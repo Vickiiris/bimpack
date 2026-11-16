@@ -36,12 +36,22 @@ const groups = await p.evaluate(() => {
     count: n.count,
     raws: n.raws ? [...n.raws] : [],
     kids: n.children.map((c) => c.name),
+    hint: n.hint || '',
+    hintFrom: n.hintFrom || '',
   }));
 });
 console.log('系统分组', JSON.stringify(groups, null, 1));
 
 const names = groups.map((g) => g.name).sort();
-assert(names.join(',') === 'CN,CR,CWP', `按缩写归类：${names.join(' / ')}（2 个 CN 变体 + cn-9 合并为 CN）`);
+assert(names.join(',') === 'CN,CR,CWP,QQ', `按缩写归类：${names.join(' / ')}（CN 变体 + cn-9 合并为 CN）`);
+
+// 缩写后面要跟中文系统名：内置对照命中 + 表里没有时用类型名兜底
+const cnHint = groups.find((g) => g.name === 'CN');
+assert(cnHint.hint === '冷凝水' && cnHint.hintFrom === 'dict', `CN 后显示中文名「${cnHint?.hint}」（内置对照）`);
+const cwpHint = groups.find((g) => g.name === 'CWP');
+assert(cwpHint.hint === '冷却水泵' && cwpHint.hintFrom === 'dict', `CWP 后显示「${cwpHint?.hint}」`);
+const qqHint = groups.find((g) => g.name === 'QQ');
+assert(qqHint.hint === '特殊管' && qqHint.hintFrom === 'data', `未登记缩写 QQ 用类型名兜底显示「${qqHint?.hint}」`);
 
 const cn = groups.find((g) => g.name === 'CN');
 assert(cn.count === 4, `CN 合并了 4 个构件（CN 5 / CN 7 / CN 15 / cn-9），实际 ${cn?.count}`);
