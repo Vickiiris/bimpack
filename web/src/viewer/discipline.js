@@ -114,9 +114,25 @@ const WEAK = [
   ['ARCH', ['建筑', '墙', '门', '窗', '楼板', '楼梯', '栏杆', '扶手', '扶栏', '幕墙',
     '屋顶', '家具', '装修', '吊顶', '坡道', '散水', '台阶', '雨棚', '顶棚',
     'wall', 'door', 'window', 'floor', 'slab', 'stair']],
-  ['STR', ['结构', '梁', '柱', '基础', '钢筋', '钢构', '支撑', '桁架', '板',
-    '混凝土', '预埋', '桩',
+  ['STR', ['结构', '梁', '基础', '钢筋', '钢构', '支撑', '桁架',
+    '混凝土', '预埋', '桩', '预制板', '现浇板', '叠合板', '框架柱', '构造柱',
     'beam', 'column', 'foundation', 'truss']],
+];
+
+/**
+ * 设备强词：只看**构件口径**（类别 / 族 / 类型）。
+ * 为什么单独一张表：Revit 里「机械设备」是个跨专业的泛类别 —— 板式换热器、
+ * 水泵、空调机组、冷水机组、水箱都挂在它下面，光看类别定不了专业，
+ * 必须看族/类型里的设备名。也只有多字词能进来（单字「板」会把
+ * 「板式换热器」误判成结构板）。
+ */
+const EQUIP = [
+  ['HVAC', ['换热器', '热交换器', '板换', '冷水机组', '空调机组', '新风机组', '风机盘管',
+    '锅炉', '冷却塔', '热泵', '分集水器', '除湿机', '风机', '空调箱', '空调机']],
+  ['PLUMB', ['水泵', '水箱', '水处理', '软水', '加药', '气压罐', '隔油', '潜水泵',
+    '污水泵', '水加热器', '水表']],
+  ['ELEC', ['变压器', '发电机', '配电柜', '开关柜', '箱变', 'ups', 'eps']],
+  ['ELV', ['机柜', '弱电箱', '摄像头', '交换机', '控制器']],
 ];
 
 /** 消防强词。刻意不收裸「报警」—— 入侵报警、防盗报警属安防（智能化） */
@@ -134,11 +150,11 @@ const has = (text, words) => {
   return !!s && words.some((w) => s.includes(w));
 };
 
-function scoreStrong(text) {
+function scoreStrong(text, table = STRONG) {
   const s = cleanText(text).toLowerCase();
   const score = new Map();
   if (!s) return score;
-  for (const [code, words] of STRONG) {
+  for (const [code, words] of table) {
     for (const w of words) {
       if (s.includes(w)) score.set(code, (score.get(code) || 0) + 1);
     }
@@ -205,8 +221,10 @@ export function disciplineCode(props, opts = {}) {
   const fam = cleanText(p['族']) || cleanText(p['Family Name']);
   const abbr = systemKey(p);
 
+  const typeName = cleanText(p['Type Name']);
   const sysText = [sysCat, sysType, sysName].join(' '); // 系统口径
   const compText = [cat, fam].join(' ');                // 构件口径
+  const equipText = [cat, fam, typeName].join(' ');     // 设备识别口径（多带类型名）
   const allText = `${sysText} ${compText}`;
 
   // ① 模型自带专业字段
@@ -243,6 +261,9 @@ export function disciplineCode(props, opts = {}) {
   if (weakSys) return weakSys;
   const strongComp = bestOf(scoreStrong(compText));
   if (strongComp) return strongComp;
+  // 设备名（板式换热器 → 暖通、水泵 → 给排水…）：机械设备这种泛类别靠它定专业
+  const equip = bestOf(scoreStrong(equipText, EQUIP));
+  if (equip) return equip;
   const weakComp = scoreWeak(compText);
   if (weakComp) return weakComp;
 

@@ -56,6 +56,19 @@ eq({ 'Category Name': '楼板' }, 'ARCH', '楼板 → 建筑（不是结构）')
 eq({ 'Category Name': '门', 族: 'HW-单扇平开门' }, 'ARCH', '门 → 建筑');
 eq({ 'Category Name': '电缆桥架' }, 'ELEC', '桥架（无系统） → 电气');
 
+console.log('--- 机械设备（跨专业泛类别）靠设备名定专业 ---');
+eq({ 'Category Name': '机械设备', 族: '板式换热器(1)', 'Type Name': '板式换热器 -1700KW' }, 'HVAC',
+  '板式换热器 → 暖通（不是结构：单字「板」早已从弱词表移除）');
+eq({ 'Category Name': '机械设备', 族: '冷水机组(1)' }, 'HVAC', '冷水机组 → 暖通');
+eq({ 'Category Name': '机械设备', 族: '空调机组(1)' }, 'HVAC', '空调机组 → 暖通');
+eq({ 'Category Name': '机械设备', 族: '风机盘管(1)' }, 'HVAC', '风机盘管 → 暖通');
+eq({ 'Category Name': '机械设备', 族: '水泵(1)' }, 'PLUMB', '水泵 → 给排水');
+eq({ 'Category Name': '机械设备', 族: '水箱(1)' }, 'PLUMB', '水箱 → 给排水');
+eq({ 'Category Name': '机械设备', 族: '变压器(1)' }, 'ELEC', '变压器 → 电气');
+eq({ 'Category Name': '结构框架', 族: 'HW-矩形梁' }, 'STR', '结构构件仍然归结构');
+eq({ 'Category Name': '楼板', 族: '楼板' }, 'ARCH', '楼板仍归建筑');
+eq({ 'Category Name': '楼梯', 族: '组合楼梯' }, 'ARCH', '楼梯仍归建筑');
+
 console.log('--- 显式字段与兜底 ---');
 eq({ 专业: '消防', 'Category Name': '风管' }, 'FIRE', '模型自带专业字段优先');
 eq({}, 'NONE', '空属性 → 未分类');

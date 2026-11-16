@@ -59,7 +59,8 @@ assert(names.join('|') === '消防|暖通空调|给排水|电气|智能化|建�
 
 const byName = (n) => info.top.find((t) => t.name === n);
 assert(byName('消防')?.count === 4, `消防 4 件（PY×2 + 喷淋 + 消火栓），实际 ${byName('消防')?.count}`);
-assert(byName('暖通空调')?.count === 2, `暖通空调 2 件（送风 + 冷冻水），实际 ${byName('暖通空调')?.count}`);
+assert(byName('暖通空调')?.count === 3, `暖通空调 3 件（送风 + 冷冻水 + 板式换热器），实际 ${byName('暖通空调')?.count}`);
+assert(!names.includes('结构'), `机械设备没有被归进结构（结构组${names.includes('结构') ? '存在' : '不存在'}）`);
 assert(byName('给排水')?.count === 1, `给排水 1 件（NW 凝结水+雨水），实际 ${byName('给排水')?.count}`);
 assert(byName('电气')?.count === 1 && byName('智能化')?.count === 1, '电气 / 智能化各 1 件（同类别桥架，按专业分开）');
 
@@ -94,7 +95,7 @@ const arch = info.tree.find((t) => t.name === '建筑');
 assert(arch.kids[0]?.name === '墙', `建筑下直接是类别：${arch.kids[0]?.name}（系统层已折叠）`);
 
 // 不重不漏
-assert(info.leafCount === 10 && info.recTotal === 10,
+assert(info.leafCount === 11 && info.recTotal === 11,
   `叶子 ${info.leafCount} 个 = 构件 ${info.recTotal} 个（不重不漏）`);
 
 assert(errs.length === 0, `无页面报错${errs.length ? '：' + errs.join(' | ') : ''}`);
