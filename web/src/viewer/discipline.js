@@ -24,14 +24,19 @@
  *   ② **消防优先**：任一系统字段或类别含消防/排烟/喷淋/火警等词 → 消防
  *      （排烟风管属暖通设备、喷淋属给排水管材，但按 GB 55037 与消防各专项验收规范
  *        必须单列成独立系统，不能拆散到暖通/给排水里）
- *   ③ **系统中文语义**（系统分类 / 系统类型 / 系统名称）按命中词数打分取最高分
+ *   ③ **BIM 语义层里的消防**：IFC 实体（IfcFireSuppressionTerminal）或 OmniClass 编码
+ *      指到消防 → 消防（消防优先不能漏）
+ *   ④ **系统中文语义**（系统分类 / 系统类型 / 系统名称）按命中词数打分取最高分
  *      —— 这一级刻意排在缩写**之前**：`系统类型 = NW-空调凝结水、坡道雨水` 是模型
  *      自己写的权威口径，而 `NW` 只是某个院自定的代号（别处可能真指 network）。
  *      特例：同一系统里既有空调类词又有排水类词（雨水/污水/废水/排水/中水）→ 按排水。
- *   ④ 系统缩写 → 专业（内置表 ABBR_DISCIPLINE，只收含义稳定的，作兜底）
- *   ⑤ 兜底：系统名里的泛词 → 构件类别的强词 → 类别 / 族 的泛词
+ *   ⑤ **BIM 语义层**：IFC 实体（IFC4 的 IfcHvacDomain / IfcPlumbingFireProtectionDomain /
+ *      IfcElectricalDomain）与 OmniClass Table 23 编码 —— 系统没给答案时，按「这是什么设备」定。
+ *      放在系统语义之后是有意的：冷冻水泵属暖通，不能因为它是 IfcPump 就划到给排水。
+ *   ⑥ 系统缩写 → 专业（内置表 ABBR_DISCIPLINE，只收含义稳定的，作兜底）
+ *   ⑦ 兜底：系统名里的泛词 → 构件类别的强词 → 类别 / 族 的泛词
  *      （没有系统字段的建筑结构模型走这里）
- *   ⑥ 都没有 → (未分类)，不瞎猜
+ *   ⑧ 都没有 → (未分类)，不瞎猜
  */
 
 import { cleanText, systemKey } from './system-key.js';
@@ -144,6 +149,130 @@ const EQUIP = [
 const FIRE_STRONG = ['消防', '喷淋', '消火栓', '消火', '排烟', '防烟', '防火',
   '火警', '火灾', '灭火', '应急照明', '疏散', 'fire', 'sprinkler', 'smoke'];
 
+/* ------------------------------------------------------------------ *
+ * BIM 语义层：IFC 实体 + OmniClass 编码
+ *
+ * 依据（这两套是 BIM 交换与分类的国际标准，比中文关键词可靠）：
+ *   - IFC4（ISO 16739-1）建筑设备域按**专业 schema** 划分：
+ *     IfcHvacDomain / IfcPlumbingFireProtectionDomain / IfcElectricalDomain /
+ *     IfcBuildingControlsDomain。IFC4 参考视图里给了一张「实体 → 专业」对照表，
+ *     本表照抄（Heating/Cooling、Ventilation/AC、Plumbing、Electrical、Controls 五栏）。
+ *   - OmniClass Table 23（Products）一级类目编码段：
+ *     23-25 结构与空间分隔、23-29 设施与人身防护、23-30 洞口/通道/防护、
+ *     23-31 给排水、23-33 暖通空调、23-35 电气与照明、23-37 信息与通信。
+ * 这两样只要模型带了，就比猜中文词准得多。
+ * ------------------------------------------------------------------ */
+
+/** IFC 实体 → 专业（键统一小写，去掉 Ifc 前缀亦可） */
+const IFC_DISCIPLINE = {
+  // 暖通：冷热源与能量转换
+  boiler: 'HVAC', burner: 'HVAC', coil: 'HVAC', chiller: 'HVAC', condenser: 'HVAC',
+  coolingtower: 'HVAC', evaporativecooler: 'HVAC', evaporator: 'HVAC',
+  heatexchanger: 'HVAC', spaceheater: 'HVAC', tubebundle: 'HVAC',
+  // 暖通：通风空调输配与末端
+  fan: 'HVAC',
+  airterminal: 'HVAC', airterminalbox: 'HVAC', ductsegment: 'HVAC', ductfitting: 'HVAC',
+  ductsilencer: 'HVAC', damper: 'HVAC', humidifier: 'HVAC',
+  airtoairheatrecovery: 'HVAC', unitaryequipment: 'HVAC', cooledbeam: 'HVAC',
+  vibrationisolator: 'HVAC', engine: 'HVAC',
+  // 给排水
+  pump: 'PLUMB', valve: 'PLUMB', tank: 'PLUMB', pipesegment: 'PLUMB', pipefitting: 'PLUMB',
+  sanitaryterminal: 'PLUMB', stackterminal: 'PLUMB', wasteterminal: 'PLUMB',
+  interceptor: 'PLUMB', liquidterminal: 'PLUMB', filter: 'PLUMB',
+  // 消防
+  firesuppressionterminal: 'FIRE',
+  // 电气
+  cablesegment: 'ELEC', cablefitting: 'ELEC', cablecarriersegment: 'ELEC',
+  cablecarrierfitting: 'ELEC', electricappliance: 'ELEC', electricdistributionboard: 'ELEC',
+  distributionboard: 'ELEC', electricgenerator: 'ELEC', electricmotor: 'ELEC',
+  electrictimecontrol: 'ELEC', motorconnection: 'ELEC', protectivedevice: 'ELEC',
+  protectivedevicetrippingunit: 'ELEC', transformer: 'ELEC', junctionbox: 'ELEC',
+  lightfixture: 'ELEC', lamp: 'ELEC', switchingdevice: 'ELEC', outlet: 'ELEC',
+  solardevice: 'ELEC', electricflowstoragedevice: 'ELEC',
+  // 智能化 / 弱电 / 楼控
+  communicationsappliance: 'ELV', audiovisualappliance: 'ELV', sensor: 'ELV',
+  actuator: 'ELV', alarm: 'ELV', controller: 'ELV', flowinstrument: 'ELV',
+  flowmeter: 'ELV', unitarycontrolelement: 'ELV',
+  // 建筑 / 结构
+  wall: 'ARCH', door: 'ARCH', window: 'ARCH', slab: 'ARCH', stair: 'ARCH',
+  railing: 'ARCH', roof: 'ARCH', covering: 'ARCH', curtainwall: 'ARCH',
+  column: 'STR', beam: 'STR', member: 'STR', footing: 'STR', pile: 'STR',
+  plate: 'STR', reinforcingbar: 'STR', reinforcingmesh: 'STR', tendon: 'STR',
+};
+
+/** OmniClass Table 23 一级类目编码 → 专业（取前两段：23.33 → HVAC） */
+const OMNICLASS_PREFIX = {
+  '23.11': 'OTHER', '23.13': 'STR', '23.15': 'ARCH', '23.17': 'ARCH',
+  '23.19': 'OTHER', '23.21': 'ARCH', '23.23': 'ELEC', '23.25': 'STR',
+  '23.27': 'OTHER', '23.29': 'FIRE', '23.30': 'ARCH', '23.31': 'PLUMB',
+  '23.33': 'HVAC', '23.35': 'ELEC', '23.37': 'ELV', '23.39': 'OTHER',
+};
+
+/** OmniClass 英文标题关键词（编码缺失时的兜底；也用于 23.29 的消防/安防拆分） */
+const OMNI_TITLE = [
+  ['FIRE', ['fire', 'sprinkler', 'smoke', 'extinguish']],
+  ['ELV', ['cctv', 'intrusion', 'security', 'access control', 'communication',
+    'audio', 'data', 'telephone', 'network']],
+  ['HVAC', ['hvac', 'duct', 'air', 'fan', 'boiler', 'chiller', 'heating', 'cooling',
+    'ventilat', 'humidif']],
+  ['PLUMB', ['plumb', 'pipe', 'sanitary', 'valve', 'pump', 'tank', 'drain', 'faucet',
+    'toilet', 'sink', 'shower', 'urinal', 'water']],
+  ['ELEC', ['electric', 'light', 'cable', 'transform', 'panel', 'switch', 'generator',
+    'conduit', 'wire']],
+  ['STR', ['column', 'beam', 'structur', 'foundation', 'footing', 'pile', 'steel',
+    'concrete', 'slab']],
+  ['ARCH', ['door', 'window', 'wall', 'partition', 'ceiling', 'floor', 'stair',
+    'railing', 'roof', 'curtain wall', 'furnitur']],
+];
+
+const valueOfKeys = (props, re) => {
+  for (const [k, v] of Object.entries(props)) {
+    if (!re.test(k)) continue;
+    const t = cleanText(v);
+    if (t) return t;
+  }
+  return '';
+};
+
+/** 从 IFC 实体名得到专业；props 里可能叫「导出类型到 IFC」「IFC 类型」「ifcType」… */
+export function ifcDiscipline(props) {
+  const p = props || {};
+  const raw = valueOfKeys(p, /ifc/i);
+  if (!raw) return '';
+  // 可能是 "IfcPump" / "IFC4 IfcPump" / "IfcFlowMovingDevice/IfcPump"
+  const found = raw.match(/Ifc[A-Za-z]+/g);
+  if (!found) return '';
+  for (const name of found) {
+    const key = name.replace(/^Ifc/, '').toLowerCase();
+    if (IFC_DISCIPLINE[key]) return IFC_DISCIPLINE[key];
+  }
+  return '';
+}
+
+/** 从 OmniClass 编号/标题得到专业 */
+export function omniclassDiscipline(props) {
+  const p = props || {};
+  const code = valueOfKeys(p, /omniclass.*(编号|number|code)/i) || cleanText(p['OmniClass 编号']);
+  const title = (valueOfKeys(p, /omniclass.*(标题|title|name)/i) || cleanText(p['OmniClass 标题'])).toLowerCase();
+
+  if (code) {
+    const head = code.replace(/[^0-9.]/g, '.').match(/^2?3\.(\d{2})/);
+    const key = head ? `23.${head[1]}` : '';
+    const mapped = key && OMNICLASS_PREFIX[key];
+    // 23.29 是「设施与人身防护」，消防与安防混在一起，看标题拆
+    if (mapped === 'FIRE' && title) {
+      if (/cctv|intrusion|security|access|surveillance/.test(title)) return 'ELV';
+    }
+    if (mapped && mapped !== 'OTHER') return mapped;
+  }
+  if (title) {
+    for (const [code2, words] of OMNI_TITLE) {
+      for (const w of words) if (title.includes(w)) return code2;
+    }
+  }
+  return '';
+}
+
 /** 排水类词：一个系统里同时出现「空调类 + 排水类」时按排水处理（见 disciplineCode ③） */
 const DRAIN = ['雨水', '污水', '废水', '排水', '中水', '地漏'];
 
@@ -247,7 +376,15 @@ export function disciplineCode(props, opts = {}) {
     return fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE');
   }
 
-  // ③ 系统中文语义 —— **比缩写可靠**：模型自己写的「系统分类 / 系统类型」是权威口径，
+  // ③ BIM 语义层（IFC 实体 / OmniClass 编码）里凡是消防的先落地 —— 消防优先不能漏。
+  //    （IFC4 按 IfcHvacDomain / IfcPlumbingFireProtectionDomain / IfcElectricalDomain
+  //      划分专业；OmniClass Table 23 的 23-31/33/35/37 就是给排水/暖通/电气/信息通信）
+  const bim = ifcDiscipline(p) || omniclassDiscipline(p);
+  if (bim === 'FIRE') {
+    return fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE');
+  }
+
+  // ④ 系统中文语义 —— **比缩写可靠**：模型自己写的「系统分类 / 系统类型」是权威口径，
   //    缩写只是各院自定的代号（同一个 NW，有的指网络，有的指凝结水）。
   const sc = scoreStrong(sysText);
   // 混合水系统：同时含空调类词和排水类词 → 按排水（它是把水排走的系统，
@@ -256,12 +393,17 @@ export function disciplineCode(props, opts = {}) {
   const best = bestOf(sc);
   if (best) return best;
 
-  // ④ 系统缩写（模型没给中文语义时才兜底）
+  // ⑤ BIM 语义层：IFC 实体 / OmniClass 编码 —— 系统没给答案时，按「这是什么设备」定。
+  //    顺序放在系统语义之后是有意的：一台泵在冷冻水系统里属暖通，不能因为它是 IfcPump
+  //    就划到给排水；但模型没写系统时，IfcPump 就是最可靠的依据。
+  if (bim) return bim;
+
+  // ⑥ 系统缩写（模型没给中文语义时才兜底）
   if (abbr && abbr !== '(未分类)' && ABBR_DISCIPLINE[abbr]) {
     return ABBR_DISCIPLINE[abbr];
   }
 
-  // ⑤ 兜底：系统名里的泛词 → 构件类别上的强词（如「电缆桥架」）→ 构件泛词
+  // ⑦ 兜底：系统名里的泛词 → 构件类别上的强词（如「电缆桥架」）→ 构件泛词
   const weakSys = scoreWeak(sysText);
   if (weakSys) return weakSys;
   const strongComp = bestOf(scoreStrong(compText));

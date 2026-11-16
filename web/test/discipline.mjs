@@ -138,6 +138,39 @@ const leaf = (props) => ({ props });
   console.log(`${ok ? '✓' : '✗'} 同类里专业混杂（50 对 50）时不推（${r.get(ls[4]).code}）`);
 }
 
+console.log('--- BIM 语义层：IFC 实体 ---');
+eq({ 导出类型到IFC: '', 'IFC 类型': 'IfcPump' }, 'PLUMB', 'IfcPump → 给排水');
+eq({ '导出类型到 IFC': 'IfcChiller' }, 'HVAC', 'IfcChiller → 暖通');
+eq({ '导出类型到 IFC': 'IfcBoiler' }, 'HVAC', 'IfcBoiler → 暖通');
+eq({ '导出类型到 IFC': 'IfcHeatExchanger' }, 'HVAC', 'IfcHeatExchanger → 暖通');
+eq({ '导出类型到 IFC': 'IfcFan' }, 'HVAC', 'IfcFan → 暖通');
+eq({ '导出类型到 IFC': 'IfcDuctSegment' }, 'HVAC', 'IfcDuctSegment → 暖通');
+eq({ '导出类型到 IFC': 'IfcValve' }, 'PLUMB', 'IfcValve → 给排水');
+eq({ '导出类型到 IFC': 'IfcSanitaryTerminal' }, 'PLUMB', 'IfcSanitaryTerminal → 给排水');
+eq({ '导出类型到 IFC': 'IfcFireSuppressionTerminal' }, 'FIRE', 'IfcFireSuppressionTerminal → 消防');
+eq({ '导出类型到 IFC': 'IfcLightFixture' }, 'ELEC', 'IfcLightFixture → 电气');
+eq({ '导出类型到 IFC': 'IfcCableCarrierSegment' }, 'ELEC', '桥架段 → 电气');
+eq({ '导出类型到 IFC': 'IfcTransformer' }, 'ELEC', '变压器 → 电气');
+eq({ '导出类型到 IFC': 'IfcCommunicationsAppliance' }, 'ELV', '通信设备 → 智能化');
+eq({ '导出类型到 IFC': 'IfcSensor' }, 'ELV', '传感器 → 智能化');
+eq({ '导出类型到 IFC': 'IfcColumn' }, 'STR', 'IfcColumn → 结构');
+eq({ '导出类型到 IFC': 'IfcPump', 系统分类: '冷冻水' }, 'HVAC', '系统优先于设备类型：冷冻水泵归暖通');
+eq({ '导出类型到 IFC': 'IfcFireSuppressionTerminal', 系统分类: '给水' }, 'FIRE', '消防实体压过系统字段');
+eq({ '导出类型到 IFC': '默认' }, 'NONE', '「默认」不是 IFC 实体，不参与判定');
+
+console.log('--- BIM 语义层：OmniClass Table 23 ---');
+eq({ 'OmniClass 编号': '23.30.10.00', 'OmniClass 标题': 'Doors' }, 'ARCH', '23-30 门 → 建筑');
+eq({ 'OmniClass 编号': '23.25.30.11.14.11', 'OmniClass 标题': 'Columns' }, 'STR', '23-25 柱 → 结构');
+eq({ 'OmniClass 编号': '23.33.00.00' }, 'HVAC', '23-33 暖通');
+eq({ 'OmniClass 编号': '23.31.11.00' }, 'PLUMB', '23-31 给排水');
+eq({ 'OmniClass 编号': '23.35.47.11' }, 'ELEC', '23-35 电气（灯具）');
+eq({ 'OmniClass 编号': '23.37.11.00' }, 'ELV', '23-37 信息通信');
+eq({ 'OmniClass 编号': '23.29.11.11', 'OmniClass 标题': 'CCTV' }, 'ELV', '23-29 里的安防 → 智能化');
+eq({ 'OmniClass 编号': '23.29.29.00', 'OmniClass 标题': 'Fire Detection Devices' }, 'FIRE', '23-29 里的火灾探测 → 消防');
+eq({ 'OmniClass 标题': 'Plumbing Fixtures' }, 'PLUMB', '只有英文标题也能判');
+eq({ 'Category Name': '机械设备', 族: '未知设备', 'OmniClass 编号': '23.33.00.00' }, 'HVAC',
+  '机械设备 + OmniClass 暖通 → 暖通（泛类别终于有依据了）');
+
 console.log('--- 表结构自检 ---');
 const bad = Object.entries(ABBR_DISCIPLINE).filter(([k, v]) => k !== k.toUpperCase() || !disciplineName(v));
 if (bad.length) failed++;
