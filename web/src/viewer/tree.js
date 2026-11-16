@@ -23,14 +23,74 @@ const MAX_CHILDREN_RENDER = 800;
 
 /** 分组方式：都是拿 extras 里的中文属性做键，尾部 \r 要清掉 */
 export const GROUP_MODES = {
-  category: { label: '类别 → 类型', fields: ['Category Name', 'Type Name'] },
-  system: { label: '系统 → 类别', fields: ['系统名称', 'Category Name'] },
-  family: { label: '族 → 类型', fields: ['族', 'Type Name'] },
-  level: { label: '标高 → 类别', fields: ['参照标高', 'Category Name'] },
+  category: {
+    label: '类别 → 类型',
+    fields: [{ key: 'Category Name' }, { key: 'Type Name' }],
+  },
+  system: {
+    label: '系统（缩写） → 类别',
+    fields: [{ key: '系统名称', map: systemAbbr, label: '系统' }, { key: 'Category Name' }],
+  },
+  systemType: {
+    label: '系统（缩写） → 类别 → 类型',
+    fields: [
+      { key: '系统名称', map: systemAbbr, label: '系统' },
+      { key: 'Category Name' },
+      { key: 'Type Name' },
+    ],
+  },
+  family: {
+    label: '族 → 类型',
+    fields: [{ key: '族' }, { key: 'Type Name' }],
+  },
+  level: {
+    label: '标高 → 类别',
+    fields: [{ key: '参照标高' }, { key: 'Category Name' }],
+  },
   raw: { label: '原始结构', fields: null },
 };
 
 const clean = (v) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+
+/**
+ * 系统名称 → 系统缩写（层级树「系统」层的唯一分类键）
+ *
+ * 规则（与业务口径一致：**缩写定类别，编号不参与归属**）：
+ *   1. 只取「第一个系统条目」：多系统值按 , ， ; ； / 、 | + 切开，取首段
+ *      —— "CR 30,CR 18" 归 CR，不会另立一个 "CR 30,CR 18" 类别
+ *   2. 去掉括号注释："CN 5(备用)" → "CN 5"
+ *   3. 剔除结尾的编号 token：末尾含数字的整段（含空格/连字符/下划线）一律删掉
+ *      —— "CN 5" / "CN-5" / "CN_05" / "CW 2A" 都归到 "CN" / "CW"
+ *   4. 保留缩写里的字母后缀："CHW-A" 仍是 "CHW-A"（字母不是编号，有区分意义）
+ *   5. 统一大写、去空白；空值或纯数字 → 「(未分类)」
+ */
+export function systemAbbr(raw) {
+  const s = clean(raw);
+  if (!s) return '(未分类)';
+
+  // 1) 多系统值只取第一个系统
+  const head = s.split(/[,，;；/、|+]/)[0].trim();
+  if (!head) return '(未分类)';
+
+  // 2) 去掉括号注释："CN 5(备用)" → "CN 5"
+  const noNote = head.replace(/[（(][^）)]*[）)]/g, ' ').trim();
+
+  // 3) 首选：开头的字母段（字母之间允许 - _ . 连接），
+  //    遇到数字/空白/中文即止 —— "CN5" "CN 5" "CN-5" "CHW-A 12" 都能只取缩写
+  const m = noNote.match(/^[A-Za-z]+(?:[-_.][A-Za-z]+)*/);
+  if (m) return m[0].toUpperCase();
+
+  // 4) 不以字母开头（如「生活给水 JL 3」）：剔除结尾的编号段，保留其余
+  const stripped = noNote
+    .replace(/[\s._-]*[A-Za-z]*\d[A-Za-z0-9]*\s*$/, '')
+    .replace(/[\s._-]+$/g, '')
+    .trim();
+
+  if (!stripped) return '(未分类)';
+  // 5) 纯数字/纯符号没有分类意义
+  if (!/[A-Za-z\u4e00-\u9fa5]/.test(stripped)) return '(未分类)';
+  return stripped.toUpperCase();
+}
 
 function cmpName(a, b) {
   // 「未分类」永远排最后，别挡住有类别的构件
@@ -67,9 +127,11 @@ function buildRaw(obj, depth, objectToRecs) {
 
 /**
  * 合成分组树：类别 → 类型 → 构件
+ *
  * @param {THREE.Object3D} sceneRoot
  * @param {Map} objectToRecs Object3D → rec[]
- * @param {string[]} fields 逐层的属性键
+ * @param {Array<{key:string, map?:(v:string)=>string, label?:string}>} fields 逐层的属性定义
+ *        map 用于把原始值归一到分类键（例如「系统名称」→「系统缩写」）
  */
 function buildGrouped(sceneRoot, objectToRecs, fields) {
   const leaves = [];
@@ -103,18 +165,26 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
   for (const leaf of leaves) {
     let parent = root;
     for (let i = 0; i < fields.length; i++) {
-      const label = clean(leaf.props[fields[i]]) || '(未分类)';
+      const f = fields[i];
+      const key = typeof f === 'string' ? f : f.key;
+      const rawVal = clean(leaf.props[key]);
+      // 分类键：有 map 就用归一化结果（如系统缩写），否则用原值
+      const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal))) || '(未分类)';
+
       let m = maps.get(parent);
       if (!m) { m = new Map(); maps.set(parent, m); }
       let g = m.get(label);
       if (!g) {
         g = {
           obj: null, name: label, depth: i + 1, children: [],
-          recs: null, hasMesh: false, isGroup: true, count: 0, field: fields[i],
+          recs: null, hasMesh: false, isGroup: true, count: 0,
+          field: key, fieldLabel: (typeof f === 'string' ? key : f.label) || key,
+          raws: new Set(),   // 归到这个分类键下的原始取值（悬浮提示里给用户看）
         };
         m.set(label, g);
         parent.children.push(g);
       }
+      if (rawVal) g.raws.add(rawVal);
       g.count++;
       parent = g;
     }
@@ -301,7 +371,16 @@ export function createTree(container, opts = {}) {
     const row = document.createElement('div');
     row.className = 'node' + (node.isGroup ? ' is-group' : '');
     row.style.paddingLeft = `${node.depth * 13 + 2}px`;
-    row.title = node.name;
+    // 分组节点：把归一化前的一串原始取值列在悬浮提示里（如 CN 5 / CN 7 / CN 15 → CN）
+    if (node.isGroup && node.raws?.size > 1) {
+      const list = [...node.raws];
+      row.title = `${node.fieldLabel || '分组'}「${node.name}」`
+        + `（${list.length} 种原始取值）\n`
+        + list.slice(0, 20).join('、')
+        + (list.length > 20 ? ` …等 ${list.length} 种` : '');
+    } else {
+      row.title = node.name;
+    }
     item.appendChild(row);
 
     const hasKids = node.children.length > 0;
