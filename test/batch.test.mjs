@@ -1,11 +1,11 @@
 /**
  * 无头单元测试：不开 WebGL，直接验证 bim-batch.js 的核心逻辑
- *   node test-batch.mjs
+ *   node test/batch.test.mjs
  *
  * 覆盖：材质分组 / 顶点与索引预分配 / 属性不一致处理 / 变换烘焙 / 拾取 / 显隐 / 高亮
  */
 import * as THREE from 'three';
-import { batchGLTFScene, setHighlight, setVisible } from '../viewer/bim-batch.js';
+import { batchGLTFScene, setHighlight, setVisible } from '../web/src/viewer/bim-batch.js';
 
 const ok = [];
 const fail = [];
@@ -87,10 +87,13 @@ setVisible(hit.rec, false);
 t('隐藏生效', hit.rec.batch.getVisibleAt(hit.rec.instanceId) === false);
 setVisible(hit.rec, true);
 t('恢复显示生效', hit.rec.batch.getVisibleAt(hit.rec.instanceId) === true);
-setHighlight(hit.rec, 0xffb020);
+setHighlight(hit.rec, true);
 const c = new THREE.Color();
 hit.rec.batch.getColorAt(hit.rec.instanceId, c);
-t('高亮颜色写入成功', c.getHex() === 0xffb020, `c=#${c.getHexString()}`);
+t('高亮颜色写入成功', c.getHex() !== 0xffffff, `c=#${c.getHexString()}`);
+setHighlight(hit.rec, false);
+hit.rec.batch.getColorAt(hit.rec.instanceId, c);
+t('取消高亮恢复基色', c.getHex() === 0xffffff, `c=#${c.getHexString()}`);
 
 // ---------- 结果 ----------
 console.log('\n通过 ' + ok.length + ' / ' + (ok.length + fail.length));
