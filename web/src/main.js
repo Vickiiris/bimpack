@@ -94,12 +94,22 @@ const tree = createTree($('tree'), {
   onZoom: (node) => selectNode(node, { zoom: true }),
 });
 
-// 分组方式下拉
+// 分组方式下拉：按 group 分组成 optgroup —— 主线（规范层级）与局部视图分开，
+// 免得用户以为这是两套并行的树
+const groups = new Map();
 for (const [id, m] of Object.entries(GROUP_MODES)) {
+  const gname = m.group || '其它';
+  let og = groups.get(gname);
+  if (!og) {
+    og = document.createElement('optgroup');
+    og.label = gname;
+    groups.set(gname, og);
+    $('treeGroup').appendChild(og);
+  }
   const opt = document.createElement('option');
   opt.value = id;
   opt.textContent = m.label;
-  $('treeGroup').appendChild(opt);
+  og.appendChild(opt);
 }
 $('treeGroup').value = tree.mode;
 $('treeGroup').onchange = (e) => {

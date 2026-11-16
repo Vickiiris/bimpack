@@ -19,111 +19,70 @@
 
 import { setVisible } from './bim-batch.js';
 import { systemName } from './system-names.js';
+import { DISCIPLINES, disciplineCode, disciplineName } from './discipline.js';
+import { cleanText as clean, systemAbbr, systemKey, stripAbbrPrefix } from './system-key.js';
+
+// 兼容既有引用（测试与其它模块一直从 tree.js 取这几个函数）
+export { systemAbbr, systemKey, stripAbbrPrefix };
 
 const MAX_CHILDREN_RENDER = 800;
 
-/** 分组方式：都是拿 extras 里的中文属性做键，尾部 \r 要清掉 */
+/**
+ * 分组方式。
+ *
+ * 主线只有一套（unified）：专业 → 系统 → 类别 → 类型 → 构件。
+ * 其余是**同一批构件的局部视图**（单轴展开），不是平行的第二套层级 ——
+ * 因此构件不会在多棵树里重复出现，计数永远一致。
+ */
 export const GROUP_MODES = {
-  category: {
-    label: '类别 → 类型',
-    fields: [{ key: 'Category Name' }, { key: 'Type Name' }],
+  unified: {
+    label: '专业→系统→类别→类型', group: '规范层级（主线）',
+    fields: [
+      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), label: '专业' },
+      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
+      { key: 'Category Name' },
+      { key: 'Type Name' },
+    ],
+  },
+  unifiedFamily: {
+    label: '专业→系统→类别→族→类型', group: '规范层级（主线）',
+    fields: [
+      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), label: '专业' },
+      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
+      { key: 'Category Name' },
+      { key: '族', optional: true },
+      { key: 'Type Name' },
+    ],
   },
   system: {
-    label: '系统（缩写） → 类别',
+    label: '系统→类别', group: '局部视图',
     fields: [
       { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
       { key: 'Category Name' },
     ],
   },
   systemType: {
-    label: '系统（缩写） → 类别 → 类型',
+    label: '系统→类别→类型', group: '局部视图',
     fields: [
       { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
       { key: 'Category Name' },
       { key: 'Type Name' },
     ],
   },
+  category: {
+    label: '类别→类型', group: '局部视图',
+    fields: [{ key: 'Category Name' }, { key: 'Type Name' }],
+  },
   family: {
-    label: '族 → 类型',
+    label: '族→类型', group: '局部视图',
     fields: [{ key: '族' }, { key: 'Type Name' }],
   },
   level: {
-    label: '标高 → 类别',
+    label: '标高→类别', group: '局部视图',
     fields: [{ key: '参照标高' }, { key: 'Category Name' }],
   },
-  raw: { label: '原始结构', fields: null },
+  raw: { label: '原始结构', group: '局部视图', fields: null },
 };
-
-const clean = (v) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
-
-/**
- * 分类键（系统层的唯一归并依据），优先用模型自带的字段：
- *   1. `系统缩写` —— 有的导出直接给（如 "EAD"），最可靠，直接用
- *   2. 没有这个字段时才解析 `系统名称`（"EAD 5" → EAD）
- * 缩写后的编号一律不参与判定。
- */
-export function systemKey(props) {
-  const p = props || {};
-  const explicit = clean(p['系统缩写']);
-  if (explicit) {
-    // 自带缩写也可能带编号/多余符号："EAD-5" → EAD
-    const t = explicit.replace(/[\s._-]*[A-Za-z]*\d[A-Za-z0-9]*\s*$/g, '').replace(/[\s._-]+$/g, '').trim();
-    if (t) return t.toUpperCase();
-  }
-  return systemAbbr(p['系统名称']);
-}
-
-/** 把 "EAD-排风管" 里的缩写前缀去掉，只留中文系统名 → "排风管" */
-export function stripAbbrPrefix(value, abbr) {
-  let s = clean(value);
-  if (!s) return '';
-  const a = clean(abbr);
-  if (a) {
-    const re = new RegExp(`^${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[-—_:：/|·]?\\s*`, 'i');
-    s = s.replace(re, '');
-  }
-  return s.trim();
-}
-
-/**
- * 系统名称 → 系统缩写（层级树「系统」层的唯一分类键）
- *
- * 规则（与业务口径一致：**缩写定类别，编号不参与归属**）：
- *   1. 只取「第一个系统条目」：多系统值按 , ， ; ； / 、 | + 切开，取首段
- *      —— "CR 30,CR 18" 归 CR，不会另立一个 "CR 30,CR 18" 类别
- *   2. 去掉括号注释："CN 5(备用)" → "CN 5"
- *   3. 剔除结尾的编号 token：末尾含数字的整段（含空格/连字符/下划线）一律删掉
- *      —— "CN 5" / "CN-5" / "CN_05" / "CW 2A" 都归到 "CN" / "CW"
- *   4. 保留缩写里的字母后缀："CHW-A" 仍是 "CHW-A"（字母不是编号，有区分意义）
- *   5. 统一大写、去空白；空值或纯数字 → 「(未分类)」
- */
-export function systemAbbr(raw) {
-  const s = clean(raw);
-  if (!s) return '(未分类)';
-
-  // 1) 多系统值只取第一个系统
-  const head = s.split(/[,，;；/、|+]/)[0].trim();
-  if (!head) return '(未分类)';
-
-  // 2) 去掉括号注释："CN 5(备用)" → "CN 5"
-  const noNote = head.replace(/[（(][^）)]*[）)]/g, ' ').trim();
-
-  // 3) 首选：开头的字母段（字母之间允许 - _ . 连接），
-  //    遇到数字/空白/中文即止 —— "CN5" "CN 5" "CN-5" "CHW-A 12" 都能只取缩写
-  const m = noNote.match(/^[A-Za-z]+(?:[-_.][A-Za-z]+)*/);
-  if (m) return m[0].toUpperCase();
-
-  // 4) 不以字母开头（如「生活给水 JL 3」）：剔除结尾的编号段，保留其余
-  const stripped = noNote
-    .replace(/[\s._-]*[A-Za-z]*\d[A-Za-z0-9]*\s*$/, '')
-    .replace(/[\s._-]+$/g, '')
-    .trim();
-
-  if (!stripped) return '(未分类)';
-  // 5) 纯数字/纯符号没有分类意义
-  if (!/[A-Za-z\u4e00-\u9fa5]/.test(stripped)) return '(未分类)';
-  return stripped.toUpperCase();
-}
 
 function cmpName(a, b) {
   // 「未分类」永远排最后，别挡住有类别的构件
@@ -189,27 +148,52 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
 
   leaves.sort(cmpName);
 
+  // 每层先算好每个叶子的分类键，用两件事：
+  //   (a) 折叠「整层只有一个取值」的空层 —— 没有系统字段的建筑/结构模型不该多出
+  //       一层全是「(未分类)」的假层级；整份模型同属一个专业时同理
+  //   (b) 后面建立树时不用重复调 map（map 可能读多个字段，不便宜）
+  const labelOf = (leaf, f) => {
+    const key = typeof f === 'string' ? f : f.key;
+    const rawVal = clean(leaf.props[key]);
+    // 分类键：有 map 就用归一化结果（如系统缩写），否则用原值
+    const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props))) || '(未分类)';
+    return { key, rawVal, label };
+  };
+  const grid = leaves.map((leaf) => fields.map((f) => labelOf(leaf, f)));
+  const activeIdx = fields
+    .map((_, i) => i)
+    .filter((i) => {
+      if (fields.length === 1 || i === 0) return true; // 顶层永远保留，单层模式不折叠
+      const first = grid[0]?.[i]?.label;
+      return grid.some((row) => row[i].label !== first);
+    });
+
   const root = {
     obj: sceneRoot, name: '模型', depth: 0, children: [],
     recs: null, hasMesh: false, isGroup: true, count: leaves.length,
   };
 
   const maps = new Map(); // 父节点 → (标签 → 子节点)
-  for (const leaf of leaves) {
+  for (let li = 0; li < leaves.length; li++) {
+    const leaf = leaves[li];
     let parent = root;
-    for (let i = 0; i < fields.length; i++) {
+    let depth = 0;
+    for (let d = 0; d < activeIdx.length; d++) {
+      const i = activeIdx[d];
       const f = fields[i];
-      const key = typeof f === 'string' ? f : f.key;
-      const rawVal = clean(leaf.props[key]);
-      // 分类键：有 map 就用归一化结果（如系统缩写），否则用原值
-      const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props))) || '(未分类)';
+      const { key, rawVal, label } = grid[li][i];
+
+      // 可选层（系统 / 族）没有值时，不给这个构件凭空造一层「(未分类)」——
+      // 建筑构件本来就不属于任何机电系统，直接挂到上一级更符合实际。
+      // 深度按实际走过的层数算，所以这种构件的叶子会比同层其它构件浅一级。
+      if (typeof f !== 'string' && f.optional && label === '(未分类)') continue;
 
       let m = maps.get(parent);
       if (!m) { m = new Map(); maps.set(parent, m); }
       let g = m.get(label);
       if (!g) {
         g = {
-          obj: null, name: label, depth: i + 1, children: [],
+          obj: null, name: label, depth: depth + 1, children: [],
           recs: null, hasMesh: false, isGroup: true, count: 0,
           field: key, fieldLabel: (typeof f === 'string' ? key : f.label) || key,
           raws: new Set(),   // 归到这个分类键下的原始取值（悬浮提示里给用户看）
@@ -221,6 +205,8 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
         m.set(label, g);
         parent.children.push(g);
       }
+      // 专业层记下代码，供行上色（渲染时按 disc-XXX 加 class）
+      if (typeof f !== 'string' && f.code && !g.discCode) g.discCode = f.code(leaf.props);
       if (rawVal) g.raws.add(rawVal);
       const tn = clean(leaf.props['Type Name']);
       if (tn) g.typeFreq.set(tn, (g.typeFreq.get(tn) || 0) + 1);
@@ -233,8 +219,9 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
       }
       g.count++;
       parent = g;
+      depth++;
     }
-    leaf.depth = fields.length + 1;
+    leaf.depth = depth + 1;
     parent.children.push(leaf);
   }
 
@@ -254,7 +241,7 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     return best;
   };
   const assignHint = (n) => {
-    if (n.isGroup && n.mapped) {
+    if (n.isGroup && n.mapped && n.fieldLabel === '系统') {
       // ① 模型自带「系统类型」：去掉缩写前缀即中文名（"EAD-排风管" → "排风管"）
       const sysType = stripAbbrPrefix(topType(n.sysTypeFreq), n.name);
       // ② 模型自带「系统分类」：如「排风」
@@ -294,7 +281,7 @@ function countAll(node) {
 export function createTree(container, opts = {}) {
   const { onSelect, onZoom } = opts;
   let root = null;
-  let mode = 'category';
+  let mode = 'unified';
   let sceneRoot = null;
   let recsMap = new Map();
   let selectedRow = null;
@@ -448,10 +435,16 @@ export function createTree(container, opts = {}) {
     item.className = 'node-item';
 
     const row = document.createElement('div');
-    row.className = 'node' + (node.isGroup ? ' is-group' : '');
+    row.className = 'node' + (node.isGroup ? ' is-group' : '')
+      + (node.discCode ? ` disc disc-${node.discCode}` : '');
     row.style.paddingLeft = `${node.depth * 13 + 2}px`;
     // 分组节点：把归一化前的一串原始取值列在悬浮提示里（如 CN 5 / CN 7 / CN 15 → CN）
-    if (node.isGroup && (node.hint || node.raws?.size > 1)) {
+    if (node.discCode) {
+      // 专业层：说明这一级是怎么归出来的
+      row.title = `专业：${node.name}（一级归类）\n`
+        + '归并依据：系统缩写 → 系统分类/系统类型 → 类别/族，消防优先单列\n'
+        + `本专业构件数：${node.count}`;
+    } else if (node.isGroup && (node.hint || node.raws?.size > 1)) {
       const parts = [];
       if (node.hint) {
         const src = {
