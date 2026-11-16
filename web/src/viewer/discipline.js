@@ -107,10 +107,12 @@ const STRONG = [
 
 /** 弱关键词：构件层面的词，只在系统和缩写都没给出答案时才用 */
 const WEAK = [
-  ['HVAC', ['风机', '风管', '风道', '风阀', '风口', '冷机', '盘管', '冷却塔']],
-  ['PLUMB', ['管道', '水管', '水阀', '水泵', '水箱', '阀门', '洁具']],
-  ['ELEC', ['灯具', '灯', '开关', '线管']],
-  ['ELV', ['摄像头', '信息点', '弱电箱']],
+  ['HVAC', ['风机', '风管', '风道', '风阀', '风口', '冷机', '盘管', '冷却塔',
+    '消声器', '静压箱', '散流器', '百叶', '软接头', '风管附件', '风管部件']],
+  ['PLUMB', ['管道', '水管', '水阀', '水泵', '水箱', '阀门', '洁具', '管件',
+    '套管', '管道附件', '清扫口', '检查口', '存水弯', '雨水斗', '通气帽']],
+  ['ELEC', ['灯具', '灯', '开关', '线管', '接线盒', '电缆头', '灯带', '控制箱', '电表箱']],
+  ['ELV', ['摄像头', '信息点', '弱电箱', '摄像机', '读卡器']],
   ['ARCH', ['建筑', '墙', '门', '窗', '楼板', '楼梯', '栏杆', '扶手', '扶栏', '幕墙',
     '屋顶', '家具', '装修', '吊顶', '坡道', '散水', '台阶', '雨棚', '顶棚',
     'wall', 'door', 'window', 'floor', 'slab', 'stair']],
@@ -128,10 +130,13 @@ const WEAK = [
  */
 const EQUIP = [
   ['HVAC', ['换热器', '热交换器', '板换', '冷水机组', '空调机组', '新风机组', '风机盘管',
-    '锅炉', '冷却塔', '热泵', '分集水器', '除湿机', '风机', '空调箱', '空调机']],
+    '锅炉', '冷却塔', '热泵', '分集水器', '除湿机', '风机', '空调箱', '空调机',
+    '空气幕', '加湿器', '恒温恒湿', '空气处理机', '新风换气']],
   ['PLUMB', ['水泵', '水箱', '水处理', '软水', '加药', '气压罐', '隔油', '潜水泵',
-    '污水泵', '水加热器', '水表']],
-  ['ELEC', ['变压器', '发电机', '配电柜', '开关柜', '箱变', 'ups', 'eps']],
+    '污水泵', '排污泵', '水加热器', '水表', '热水器', '开水器', '消毒器',
+    '变频供水', '隔油池', '化粪池', '集水坑', '膨胀罐']],
+  ['ELEC', ['变压器', '发电机', '配电柜', '开关柜', '箱变', 'ups', 'eps',
+    '柴油发电机', '电表箱', '控制箱']],
   ['ELV', ['机柜', '弱电箱', '摄像头', '交换机', '控制器']],
 ];
 
@@ -268,6 +273,65 @@ export function disciplineCode(props, opts = {}) {
   if (weakComp) return weakComp;
 
   return 'NONE';
+}
+
+/**
+ * 构件所属的「类别」—— 同类别多数兜底的分组键。
+ * 用 Category Name（Revit 的类别）而不是族：族太细，同族内部不会有分歧。
+ */
+export function categoryKey(props) {
+  const p = props || {};
+  return cleanText(p['Category Name']) || cleanText(p['类别']);
+}
+
+/**
+ * 泛类别：本身横跨多个专业，不能拿「同类别多数」去推。
+ * 例：机械设备下面既有换热器（暖通）也有水泵（给排水）。
+ */
+const GENERIC_CATS = ['常规模型', '机械设备', '专用设备', '设备', '其他', '系统设备', '族'];
+
+/**
+ * 整批构件 → 专业（带「同类别多数」兜底）
+ *
+ * 单看一条属性判不出来的构件，往往能和已经判对的同类构件归到一起：
+ * 例如某套模型里「管件」大部分带系统信息、少数没带 —— 没带的那些跟同类走是对的。
+ * 规则（三道闸，宁可留未分类也不乱归）：
+ *   1. 只对**非泛类别**生效（机械设备 / 常规模型 / 专用设备 …除外）
+ *   2. 该类别里已判对（非未分类）的样本 ≥ 3 条
+ *   3. 这些样本里最高专业占比 ≥ 75%
+ *
+ * @param {Array<{props: object}>} leaves
+ * @returns {Map<object, {label: string, code: string, from: 'rule'|'category'}>}
+ */
+export function classifyLeaves(leaves) {
+  const rows = leaves.map((leaf) => ({ leaf, props: leaf.props || {}, code: disciplineCode(leaf.props || {}) }));
+
+  const byCat = new Map();
+  for (const r of rows) {
+    if (r.code === 'NONE') continue;
+    const cat = categoryKey(r.props);
+    if (!cat || GENERIC_CATS.includes(cat)) continue;
+    let m = byCat.get(cat);
+    if (!m) { m = new Map(); byCat.set(cat, m); }
+    m.set(r.code, (m.get(r.code) || 0) + 1);
+  }
+
+  const out = new Map();
+  for (const r of rows) {
+    let code = r.code;
+    let from = 'rule';
+    if (code === 'NONE') {
+      const cat = categoryKey(r.props);
+      const m = cat && !GENERIC_CATS.includes(cat) ? byCat.get(cat) : null;
+      if (m) {
+        const total = [...m.values()].reduce((a, b) => a + b, 0);
+        const [best, n] = [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (total >= 3 && n / total >= 0.75) { code = best; from = 'category'; }
+      }
+    }
+    out.set(r.leaf, { label: disciplineName(code), code, from });
+  }
+  return out;
 }
 
 /** 构件 → 专业名（树里显示的文字） */

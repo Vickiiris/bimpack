@@ -19,7 +19,7 @@
 
 import { setVisible } from './bim-batch.js';
 import { systemName } from './system-names.js';
-import { DISCIPLINES, disciplineCode, disciplineName } from './discipline.js';
+import { DISCIPLINES, classifyLeaves, disciplineCode, disciplineName } from './discipline.js';
 import { cleanText as clean, systemAbbr, systemKey, stripAbbrPrefix } from './system-key.js';
 
 // 兼容既有引用（测试与其它模块一直从 tree.js 取这几个函数）
@@ -38,7 +38,7 @@ export const GROUP_MODES = {
   unified: {
     label: '专业→系统→类别→类型', group: '规范层级（主线）',
     fields: [
-      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), label: '专业' },
+      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
       { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
       { key: 'Category Name' },
       { key: 'Type Name' },
@@ -47,7 +47,7 @@ export const GROUP_MODES = {
   unifiedFamily: {
     label: '专业→系统→类别→族→类型', group: '规范层级（主线）',
     fields: [
-      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), label: '专业' },
+      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
       { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
       { key: 'Category Name' },
       { key: '族', optional: true },
@@ -159,7 +159,13 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props))) || '(未分类)';
     return { key, rawVal, label };
   };
-  const grid = leaves.map((leaf) => fields.map((f) => labelOf(leaf, f)));
+  // 需要「整批上下文」的层（如专业：要参考同类别其它构件）先算一遍
+  const bulkVals = fields.map((f) => (typeof f !== 'string' && f.bulk ? f.bulk(leaves) : null));
+  const grid = leaves.map((leaf) => fields.map((f, i) => {
+    const bv = bulkVals[i]?.get(leaf);
+    if (!bv) return labelOf(leaf, f);
+    return { key: typeof f === 'string' ? f : f.key, rawVal: '', label: bv.label, code: bv.code, from: bv.from };
+  }));
   const activeIdx = fields
     .map((_, i) => i)
     .filter((i) => {
@@ -181,7 +187,7 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     for (let d = 0; d < activeIdx.length; d++) {
       const i = activeIdx[d];
       const f = fields[i];
-      const { key, rawVal, label } = grid[li][i];
+      const { key, rawVal, label, code: bulkCode } = grid[li][i];
 
       // 可选层（系统 / 族）没有值时，不给这个构件凭空造一层「(未分类)」——
       // 建筑构件本来就不属于任何机电系统，直接挂到上一级更符合实际。
@@ -206,7 +212,7 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
         parent.children.push(g);
       }
       // 专业层记下代码，供行上色（渲染时按 disc-XXX 加 class）
-      if (typeof f !== 'string' && f.code && !g.discCode) g.discCode = f.code(leaf.props);
+      if (!g.discCode) g.discCode = bulkCode || (typeof f !== 'string' && f.code ? f.code(leaf.props) : '');
       if (rawVal) g.raws.add(rawVal);
       const tn = clean(leaf.props['Type Name']);
       if (tn) g.typeFreq.set(tn, (g.typeFreq.get(tn) || 0) + 1);

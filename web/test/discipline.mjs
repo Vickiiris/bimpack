@@ -3,7 +3,7 @@
  *
  * node test/discipline.mjs
  */
-import { disciplineCode, disciplineName, ABBR_DISCIPLINE, POLICY } from '../src/viewer/discipline.js';
+import { disciplineCode, disciplineName, ABBR_DISCIPLINE, POLICY, classifyLeaves } from '../src/viewer/discipline.js';
 
 let failed = 0;
 const eq = (props, want, msg, opts) => {
@@ -73,6 +73,70 @@ console.log('--- 显式字段与兜底 ---');
 eq({ 专业: '消防', 'Category Name': '风管' }, 'FIRE', '模型自带专业字段优先');
 eq({}, 'NONE', '空属性 → 未分类');
 eq({ 系统名称: '自定义系统 A', 'Category Name': '自定义' }, 'NONE', '认不出的一律未分类，不瞎猜');
+
+console.log('--- 常见机电族（以前落未分类的）---');
+eq({ 'Category Name': '常规模型', 族: '套管_', 'Type Name': 'PD1-DN89' }, 'PLUMB', '管道套管 → 给排水');
+eq({ 'Category Name': '管道附件', 族: '过滤器' }, 'PLUMB', '管道附件 → 给排水');
+eq({ 'Category Name': '风管附件', 族: '消声器' }, 'HVAC', '风管附件 → 暖通');
+eq({ 'Category Name': '电气设备', 族: '接线盒' }, 'ELEC', '接线盒 → 电气');
+eq({ 'Category Name': '机械设备', 族: '空气幕(1)' }, 'HVAC', '空气幕 → 暖通');
+eq({ 'Category Name': '机械设备', 族: '热水器(1)' }, 'PLUMB', '热水器 → 给排水');
+
+console.log('--- 同类别多数兜底（整批判定）---');
+const leaf = (props) => ({ props });
+{
+  // 同类 3 条判对（给排水）+ 1 条什么都没有 → 跟同类
+  const ls = [
+    leaf({ 'Category Name': '特殊部件', 系统名称: '生活给水 1' }),
+    leaf({ 'Category Name': '特殊部件', 系统名称: '生活给水 2' }),
+    leaf({ 'Category Name': '特殊部件', 系统名称: '生活给水 3' }),
+    leaf({ 'Category Name': '特殊部件' }),
+  ];
+  const r = classifyLeaves(ls);
+  const got = r.get(ls[3]);
+  const ok = got.code === 'PLUMB' && got.from === 'category';
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} 3 条同类都是给排水 → 第 4 条跟过去（${got.code}/${got.from}）`);
+}
+{
+  // 泛类别（机械设备）内部专业不一致 → 不许推
+  const ls = [
+    leaf({ 'Category Name': '机械设备', 族: '板式换热器(1)' }),
+    leaf({ 'Category Name': '机械设备', 族: '水泵(1)' }),
+    leaf({ 'Category Name': '机械设备', 族: '未知设备甲' }),
+    leaf({ 'Category Name': '机械设备', 族: '未知设备乙' }),
+  ];
+  const r = classifyLeaves(ls);
+  const got = r.get(ls[2]);
+  const ok = got.code === 'NONE';
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} 机械设备是泛类别，不确定的仍留未分类（${got.code}）`);
+}
+{
+  // 样本不足 3 条 → 不推
+  const ls = [
+    leaf({ 'Category Name': '稀有类别', 系统名称: '给水 1' }),
+    leaf({ 'Category Name': '稀有类别' }),
+  ];
+  const r = classifyLeaves(ls);
+  const ok = r.get(ls[1]).code === 'NONE';
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} 同类样本不足 3 条时不推（${r.get(ls[1]).code}）`);
+}
+{
+  // 同类里专业混杂（各半）→ 不推
+  const ls = [
+    leaf({ 'Category Name': '混杂类别', 系统名称: '给水 1' }),
+    leaf({ 'Category Name': '混杂类别', 系统名称: '冷冻水 1' }),
+    leaf({ 'Category Name': '混杂类别', 系统名称: '生活给水 2' }),
+    leaf({ 'Category Name': '混杂类别', 系统名称: '空调冷冻水 2' }),
+    leaf({ 'Category Name': '混杂类别' }),
+  ];
+  const r = classifyLeaves(ls);
+  const ok = r.get(ls[4]).code === 'NONE';
+  if (!ok) failed++;
+  console.log(`${ok ? '✓' : '✗'} 同类里专业混杂（50 对 50）时不推（${r.get(ls[4]).code}）`);
+}
 
 console.log('--- 表结构自检 ---');
 const bad = Object.entries(ABBR_DISCIPLINE).filter(([k, v]) => k !== k.toUpperCase() || !disciplineName(v));
