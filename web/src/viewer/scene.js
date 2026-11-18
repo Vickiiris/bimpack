@@ -3,6 +3,9 @@
  *
  * 只为 BIM 场景做取舍：
  *   - 不开阴影（12k 构件开阴影是灾难），改用半球光 + 双方向光把体积感做出来
+ *   - **必须给一张环境贴图（IBL）**：PBR 的金属材质（metalness=1）几乎没有漫反射，
+ *     颜色全部来自环境反射；只有平行光时它在屏幕上就是纯黑。用户上传 PBR 模型
+ *     「全黑」基本都是这一条，不是材质没读到。
  *   - 拾取区分「点击」和「拖拽旋转」，否则转完视角就误选中构件
  *   - 自动取景按「包围球 + 竖/横视场角较小者」算，不写死相机位置
  *
@@ -13,6 +16,7 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const BG = 0xeef0f4;
 
@@ -40,7 +44,22 @@ export function createViewer(canvas) {
   controls.maxDistance = 5_000_000;   // 真实上限在 fit() 里按模型尺度重设
   controls.minDistance = 0.01;
 
-  // 光照：半球光给基础亮度，主方向光给明暗关系，补光压死黑
+  // 环境贴图（IBL）：金属 / 光滑材质的颜色与反射都来自它。
+  // RoomEnvironment 是 three 自带的中性室内环境，离线生成、不依赖外部 HDRI 文件。
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  scene.environment = envRT.texture;
+  // 注意 three r170 的一个坑：只要场景里有 environment，**逐材质的 envMapIntensity
+  // 就会被忽略**（WebGLRenderer 用 scene.environmentIntensity 覆盖它）。
+  // 所以这里场景级强度给 0，改由 bim-batch 把这张贴图挂到真正需要它的材质上
+  // （金属 / 透射玻璃），电介质完全不受影响 —— 灰墙不会被洗白。
+  scene.environment = envRT.texture;
+  scene.environmentIntensity = 0;
+  pmrem.dispose();
+
+  // 光照：环境贴图给基础亮度与环境反射，方向光只负责明暗关系。
+  // 加了 IBL 之后方向光相应减弱 —— 两者的总能量要和原来只靠灯时接近，
+  // 否则模型会整体发白（这也是「加了环境贴图反而更难看」的常见原因）。
   const hemi = new THREE.HemisphereLight(0xffffff, 0xd6dbe3, 1.35);
   scene.add(hemi);
 
@@ -285,6 +304,8 @@ export function createViewer(canvas) {
   return {
     renderer,
     scene,
+    /** PMREM 环境贴图：Batch 侧按金属度挂到材质上，见 bim-batch 的 tuneEnvMap */
+    envMap: envRT.texture,
     camera,
     controls,
     raycaster,

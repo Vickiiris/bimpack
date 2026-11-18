@@ -379,6 +379,30 @@ Draco 的**解码器**仍然保留（`public/draco/draco_decoder.js`，asm.js �
 
 ---
 
+## 材质与光照：PBR 模型为什么以前会全黑
+
+查看器用的是 glTF 2.0 标准的 **金属-粗糙度（metallic-roughness）PBR**，材质交给 three 的
+`MeshStandardMaterial` 渲染。也就是说「PBR 材质」本身是支持的 —— 全黑是另外三件事：
+
+| 现象 | 根因 | 现在的处理 |
+|---|---|---|
+| 金属 / 抛光件纯黑，非金属正常 | `metalness=1` 的材质几乎没有漫反射，颜色**全部来自环境反射**；早先场景里只有平行光、没有 IBL | 用 three 自带的 `RoomEnvironment` 生成 PMREM 环境贴图，按 `metalness²` 挂到金属与透射玻璃上（电介质不挂，避免灰墙被洗白） |
+| 整片发白/发灰、颜色不对 | 旧版 **高光-光泽度** 材质 `KHR_materials_pbrSpecularGlossiness`，three r157 之后已移除支持 | 加载时体检扩展，用 gltf-transform 的 `metalRough()` 就地转成金属-粗糙度，并提示「已把 N 个旧版高光材质转为金属-粗糙度」 |
+| 部分构件黑（墙、型钢） | 图元里没有 material 索引时 GLTFLoader 会造「白 + metalness 1 + roughness 1」的默认材质 | 批处理阶段换成灰白素模材质（`FALLBACK`），见 `test/batch-default-mat.mjs` |
+
+支持的材质扩展（GLTFLoader r170 实现）：`KHR_materials_clearcoat`、`sheen`、`transmission`、
+`volume`、`ior`、`specular`、`iridescence`、`anisotropy`、`dispersion`、`emissive_strength`、
+`unlit`、`EXT_materials_bump`。表外的 `KHR_materials_*` 会在加载后提示「材质扩展未支持」，
+不静默装没事。
+
+光照参数是拿真实模型（`117_U_B1`）做过 A/B 的：半球光 1.35 / 主光 1.5 / 补光 0.55 / 轮廓光 0.4，
+环境贴图只给金属（强度 0.6 × metalness²）。电介质材质的外观与加 IBL 之前**逐像素一致**
+（实测均值 228.5，与改动前相同），避免「修好金属、洗白全楼」。
+
+> 自查脚本：`node test/pbr-metal.mjs`（金属不能黑）、`node test/spec-gloss.mjs`（旧材质能转）。
+
+---
+
 ## 已知限制
 
 1. **内存**。208 MB / 748 万顶点的文件，浏览器堆峰值约 2.5 GB。16 GB 内存的机器够用；
@@ -405,6 +429,7 @@ web/
 │   ├── style.css
 │   ├── core/
 │   │   ├── glb.js          GLB 字节级读写 + asset.version 修正（零依赖）
+│   │   ├── material.js     材质扩展体检 + 旧版高光材质转金属-粗糙度
 │   │   ├── process.js      WebIO + reorder + meshopt FILTER，体检
 │   │   ├── verify.js       19 项属性/材质/几何校验
 │   │   └── draco.js        asm.js Draco 解码器加载
@@ -424,6 +449,8 @@ web/
     ├── tree-system.mjs     系统分组（fixture-systems.glb）
     ├── tree-unified.mjs    规范层级五级主干（fixture-unified.glb）
     ├── manual-name.mjs     手工命名规则：解析 / 归类 / 格式异常处理
+    ├── pbr-metal.mjs       PBR 金属不能渲成纯黑（fixture-metal.glb）
+    ├── spec-gloss.mjs      旧版高光材质自动转换（fixture-specgloss.glb）
     └── report-unknown.mjs  体检：其他分类组合 / 命名规则命中 / 同类别推断
 ```
 
@@ -439,6 +466,8 @@ node test/verify-view.mjs "路径/模型.glb"  # 测取景是否裁切 / 层级�
 # 分组规则相关的测试（用内置小样，不需要真实模型）
 node test/discipline.mjs       # 专业归并 + 消防优先
 node test/manual-name.mjs      # 手工命名规则「系统名_设备名+编号」
+node test/pbr-metal.mjs        # PBR 金属不能黑（需 dev 服务）
+node test/spec-gloss.mjs       # 旧版高光材质自动转换（需 dev 服务）
 node test/system-abbr.mjs      # 系统缩写解析
 node test/tree-system.mjs      # 系统分组
 node test/tree-unified.mjs     # 规范层级（专业→系统→类别→类型）

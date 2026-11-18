@@ -86,7 +86,28 @@ function flipWinding(geo) {
  */
 const FALLBACK = { name: '默认材质', color: 0xd5dae0, metalness: 0, roughness: 0.7 };
 
-function collect(scene) {
+/**
+ * 环境贴图强度按金属度分配。
+ *
+ * 场景里放了一张 IBL 环境贴图（见 scene.js）——它是**金属材质唯一的颜色来源**，
+ * 但对电介质（混凝土、涂料、玻璃）来说，环境贴图只会额外加一层漫反射，
+ * 强度拉满会把灰墙洗成白墙（实测 0.55 的灰会跑到 0.82 的观感）。
+ * 所以只给真正需要环境反射的材质：金属（metalness²，半金属也照顾到）和透射玻璃；
+ * 混凝土 / 涂料 / 石膏这类电介质直接给 0 —— 它们的外观与加 IBL 之前完全一致，
+ * 不会被环境光"洗白"。
+ */
+function tuneEnvMap(m, envMap) {
+  if (!m || !(m.isMeshStandardMaterial || m.isMeshPhysicalMaterial)) return;
+  if (!envMap || m.envMap) return;   // 模型自带的 envMap 不动
+  const metal = Number.isFinite(m.metalness) ? THREE.MathUtils.clamp(m.metalness, 0, 1) : 0;
+  const glass = Number(m.transmission) > 0;
+  if (!glass && metal < 0.05) return;   // 电介质：不挂环境贴图，外观与以前一致
+  m.envMap = envMap;
+  m.envMapIntensity = glass ? 0.6 : 0.6 * metal * metal;
+  m.needsUpdate = true;
+}
+
+function collect(scene, envMap) {
   const groups = new Map(); // material.uuid → { material, items: [] }
   const geoUse = new Map(); // geometry.uuid → 引用次数
   let skipped = 0;
@@ -122,6 +143,7 @@ function collect(scene) {
 
     let rec = groups.get(o.material.uuid);
     if (!rec) {
+      tuneEnvMap(o.material, envMap);
       rec = { material: o.material, items: [] };
       groups.set(o.material.uuid, rec);
     }
@@ -224,12 +246,12 @@ function normalizeGeometry(src, matrixWorld, cloneIt, keepVertexAttrs) {
  *         这里用 parser.associations 找回原文，层级树上看到的就和 3ds Max 一致）
  */
 export async function batchGLTFScene(scene, opts = {}) {
-  const { onProgress = () => {}, keepAttrs = [], chunk = 250, nameOf = null } = opts;
+  const { onProgress = () => {}, keepAttrs = [], chunk = 250, nameOf = null, envMap = null } = opts;
   const baseAttrs = ['position', 'normal', ...keepAttrs];
 
   scene.updateMatrixWorld(true);
   const tStart = performance.now();
-  const { groups, geoUse, skipped } = collect(scene);
+  const { groups, geoUse, skipped } = collect(scene, envMap);
 
   const total = [...groups.values()].reduce((a, g) => a + g.items.length, 0);
   onProgress({ done: 0, total, phase: 'collect' });

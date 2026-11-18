@@ -13,7 +13,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 import { MeshoptDecoder } from 'meshoptimizer';
-import { fixAssetVersion, download } from './core/glb.js';
+import { fixAssetVersion, readJSON, download } from './core/glb.js';
+import { auditMaterialExtensions, convertSpecGloss } from './core/material.js';
 import { inspect as inspectBytes, compressGeometry, getIO, heapMB } from './core/process.js';
 import { compareJSON, compareGeometry } from './core/verify.js';
 import { createViewer } from './viewer/scene.js';
@@ -392,13 +393,34 @@ async function loadFile(file) {
     state.fixedBytes = fixed.bytes;
     if (fixed.changed) progress(null, undefined, `已修正元数据（asset.version ${fixed.from} → 2.0${fixed.removedNulls ? `，清掉 ${fixed.removedNulls} 处 null` : ''}）`);
 
+    // 2.5) 材质扩展：three 不认旧版高光-光泽度材质，就地转成金属-粗糙度
+    stage = '修补材质';
+    state.matNote = '';
+    try {
+      state.matAudit = auditMaterialExtensions(readJSON(state.fixedBytes));
+      if (state.matAudit.specGloss) {
+        progress('转换旧版高光材质…', 26, 'KHR_materials_pbrSpecularGlossiness → 金属-粗糙度');
+        const conv = await convertSpecGloss(state.fixedBytes);
+        state.fixedBytes = conv.bytes;
+        state.matNote = `已把 ${conv.converted} 个旧版高光材质转为金属-粗糙度`;
+        progress(null, undefined, state.matNote);
+      }
+    } catch (err) {
+      console.warn('材质修补失败，按原样渲染', err);
+      state.matNote = '旧版高光材质转换失败，显示可能偏暗';
+    }
+
     // 3) 渲染
     stage = '解码并渲染';
     progress('解码并渲染…', 30);
-    await renderBytes(fixed.bytes, baseName);
+    await renderBytes(state.fixedBytes, baseName);
 
     progressDone();
     updateTopbar(file.name, file.size);
+    if (state.matNote) toast(state.matNote, 'ok');
+    if (state.matAudit?.unsupported?.length) {
+      toast(`材质扩展未支持：${state.matAudit.unsupported.join('、')}（会按默认材质显示）`, 'err');
+    }
     if (state.inputCompressed) {
       toast(
         `已加载。${tightReason(state.info)}不用再压 —— 想更小请用本地 Draco 工具处理 3ds Max 原始导出`,
@@ -465,6 +487,7 @@ async function renderBytes(bytes, baseName) {
     },
     chunk: 200,
     nameOf,
+    envMap: viewer.envMap,
   });
   state.batched = batched;
 

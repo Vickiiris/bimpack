@@ -152,6 +152,7 @@ bimpack/
 | 文件 | 用途 |
 |---|---|
 | `glb.js` | 浏览器版 GLB 字节读写，进解析器前清洗非法的 `null` 与空图元 |
+| `material.js` | 材质扩展体检；旧版高光材质（SpecGloss）自动转金属-粗糙度 |
 | `draco.js` | 按需注入并初始化 Draco 解码器 |
 | `process.js` | 压缩流程：修版本 → meshopt 重编码 → 导出字节 |
 | `verify.js` | 压缩后的多项属性比对与抽样几何偏差检查 |
@@ -182,10 +183,14 @@ bimpack/
 | `make-fixture-unified.mjs` | 生成跨专业、消防优先等情形的测试样 |
 | `report-unknown.mjs` | 体检「其他分类」里的构件、命名规则命中与兜底来源（只读 GLB，不启服务） |
 | `manual-name.mjs` | 手工命名规则「系统名_设备名+编号」的解析、归类与格式异常处理 |
+| `make-fixture-metal.mjs` / `fixture-metal.glb` | 生成 PBR 金属材质测试样 |
+| `make-fixture-specgloss.mjs` / `fixture-specgloss.glb` | 生成旧版高光材质测试样 |
 | `sanitize.mjs` | 非法的 `null` / 空图元清理回归 |
 | `batch-attrs.mjs` | 批处理后仍保留 uv / 顶点色的回归 |
 | `batch-default-mat.mjs` | 无材质索引的图元不变黑的回归 |
 | `vc-glass.mjs` | 带顶点色的半透明材质不变黑的回归 |
+| `pbr-metal.mjs` | PBR 金属材质不再渲成纯黑（环境反射 / IBL） |
+| `spec-gloss.mjs` | 旧版高光材质加载时自动转换的回归 |
 | `visibility.mjs` | 树勾选显隐、组三态、右键菜单与「全部显示」 |
 | `click-clear.mjs` | 点构件高亮、点空白处取消 |
 | `fixture-systems.glb`、`fixture-unified.glb`、`fixture-vc-glass.glb` | 各类测试用的内置小样 |
