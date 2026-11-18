@@ -164,7 +164,8 @@ bimpack/
 | `bim-batch.js` | 把上万个独立 Mesh 合并为按材质分组的 BatchedMesh，保留逐构件拾取与显隐 |
 | `tree.js` | 层级树：规范层级与局部视图切换、懒加载、名称搜索、显示/隐藏 |
 | `discipline.js` | 「专业」判定规则：系统语义优先，缩写、IFC/OmniClass 语义层依次兜底 |
-| `system-key.js` | 从属性中提取系统缩写，去掉其后的编号 |
+| `system-key.js` | 从属性中提取系统缩写，去掉其后的编号；属性缺失时用构件名兜底 |
+| `manual-name.js` | 解析手工命名「系统名_设备名+编号」，供专业判定与系统分组使用 |
 | `system-names.js` | 系统缩写到中文系统名的对照表 |
 
 ### `web/test/` — 前端测试
@@ -179,7 +180,8 @@ bimpack/
 | `tree-system.mjs` | 树按「系统」分组的结构断言 |
 | `tree-unified.mjs` | 规范层级五级主干、消防优先、叶子不重不漏 |
 | `make-fixture-unified.mjs` | 生成跨专业、消防优先等情形的测试样 |
-| `report-unknown.mjs` | 体检未分类构件与兜底判定来源（只读 GLB，不启服务） |
+| `report-unknown.mjs` | 体检「其他分类」里的构件、命名规则命中与兜底来源（只读 GLB，不启服务） |
+| `manual-name.mjs` | 手工命名规则「系统名_设备名+编号」的解析、归类与格式异常处理 |
 | `sanitize.mjs` | 非法的 `null` / 空图元清理回归 |
 | `batch-attrs.mjs` | 批处理后仍保留 uv / 顶点色的回归 |
 | `batch-default-mat.mjs` | 无材质索引的图元不变黑的回归 |

@@ -6,6 +6,7 @@
  *   - 消防优先：排烟风管在设备上属暖通，按规范必须归消防
  *   - 缩写在表里 / 不在表里：CHW 查表得暖通；弱电靠「系统分类」关键词
  *   - 无系统字段的建筑构件：墙只能靠类别/族判定
+ *   - 手工添加的非 BIM 模型：只有名字，靠「系统名_设备名+编号」归类
  *
  * node test/make-fixture-unified.mjs
  */
@@ -52,6 +53,11 @@ const cases = [
   { name: '特殊部件 D（无系统信息）', cat: '特殊部件', type: '甲型', x: 28 },
   // 建筑：无任何系统字段
   { name: '基本墙 1', cat: '墙', fam: '基本墙', type: '200mm 砌体', x: 30 },
+  // 手工添加的非 BIM 模型：extras 为空，唯一线索是命名规则
+  { name: '智能照明_筒灯001', bare: true, x: 32 },
+  { name: '消防_喷淋头001', bare: true, x: 34 },
+  // 命名规则认不出的 → 应当留在「其他分类」，并说明原因
+  { name: '构件甲_未知设备001', bare: true, x: 36 },
 ];
 
 for (const c of cases) {
@@ -69,7 +75,8 @@ for (const c of cases) {
   if (c.sysType) extras['系统类型'] = c.sysType;
   if (c.sysCat) extras['系统分类'] = c.sysCat;
   if (c.fam) extras['族'] = c.fam;
-  const node = doc.createNode(c.name).setMesh(mesh).setTranslation([c.x, 0, 0]).setExtras(extras);
+  const node = doc.createNode(c.name).setMesh(mesh).setTranslation([c.x, 0, 0]);
+  if (!c.bare) node.setExtras(extras);
   scene.addChild(node);
 }
 

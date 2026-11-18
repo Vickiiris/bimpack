@@ -36,10 +36,14 @@
  *   ⑥ 系统缩写 → 专业（内置表 ABBR_DISCIPLINE，只收含义稳定的，作兜底）
  *   ⑦ 兜底：系统名里的泛词 → 构件类别的强词 → 类别 / 族 的泛词
  *      （没有系统字段的建筑结构模型走这里）
- *   ⑧ 都没有 → (未分类)，不瞎猜
+ *   ⑧ **手工命名规则**：`系统名_设备名+编号`（如 "智能照明_筒灯001"）
+ *      用户手工补进场景的非 BIM 模型没有 extras，只有名字。系统名视作「系统语义」
+ *      参与 ④ 的打分，设备名参与 ⑦ 的设备词表；格式不合规 / 系统名认不出 → 不进判定。
+ *   ⑨ 都没有 → 其他分类，不瞎猜
  */
 
-import { cleanText, systemKey } from './system-key.js';
+import { cleanText, systemKey, UNKNOWN_LABEL } from './system-key.js';
+import { MANUAL_REASONS, parseManualName } from './manual-name.js';
 
 /** 专业定义：name 是树里显示的名字，order 只影响排序 */
 export const DISCIPLINES = {
@@ -52,7 +56,8 @@ export const DISCIPLINES = {
   ARCH: { name: '建筑', order: 80 },
   STR: { name: '结构', order: 81 },
   OTHER: { name: '其他', order: 90 },
-  NONE: { name: '(未分类)', order: 99 },
+  // 兜底桶：属性缺失 / 命名规则没匹配上的构件都在这儿（旧称「未分类」）
+  NONE: { name: UNKNOWN_LABEL, order: 99 },
 };
 
 export const disciplineName = (code) => DISCIPLINES[code]?.name || DISCIPLINES.NONE.name;
@@ -340,13 +345,20 @@ function fireHostOf(text) {
 export const POLICY = { fireFirst: true };
 
 /**
- * 构件 → 专业代码
- * @param {object} props 构件的 BIM 属性（extras）
- * @param {{fireFirst?: boolean}} [opts]
+ * 构件 → 专业代码 + 判定来源
+ *
+ * 比 disciplineCode 多给两样东西，树上的悬浮提示和体检报告要用：
+ *   from   —— 是哪一级规则定的（manual = 手工命名规则、category = 同类别多数…）
+ *   detail —— 一句人话依据（"系统名「智能照明」" / "没有「_」分隔符"）
+ *
+ * @param {object} props 构件的 BIM 属性（extras，可能是空对象）
+ * @param {{fireFirst?: boolean, name?: string}} [opts] name = 构件名，手工命名规则的输入
+ * @returns {{code:string, from:string, detail:string}}
  */
-export function disciplineCode(props, opts = {}) {
+export function resolveDiscipline(props, opts = {}) {
   const p = props || {};
   const fireFirst = opts.fireFirst ?? POLICY.fireFirst;
+  const name = cleanText(opts.name ?? p['名称'] ?? p['Name']);
 
   const sysCat = cleanText(p['系统分类']);
   const sysType = cleanText(p['系统类型']);
@@ -355,25 +367,36 @@ export function disciplineCode(props, opts = {}) {
   const fam = cleanText(p['族']) || cleanText(p['Family Name']);
   const abbr = systemKey(p);
 
+  // 手工命名规则：**只在构件完全没有系统字段时生效**。
+  // 有属性就以属性为准 —— 用户随手起的名字不能盖掉模型自带的权威口径。
+  const hasSysField = !!(sysCat || sysType || sysName || cleanText(p['系统缩写']));
+  const man = hasSysField ? { ok: false, reason: 'has-sys' } : parseManualName(name);
+  const manSys = man.ok ? man.system : '';
+  const manDev = man.ok ? man.device : '';
+  // 系统名参与「系统口径」打分（和 系统分类/系统类型 同级），设备名进设备词表
+  const sysFromManual = man.ok && !(sysCat || sysType || sysName);
+
   const typeName = cleanText(p['Type Name']);
-  const sysText = [sysCat, sysType, sysName].join(' '); // 系统口径
-  const compText = [cat, fam].join(' ');                // 构件口径
-  const equipText = [cat, fam, typeName].join(' ');     // 设备识别口径（多带类型名）
+  const sysText = [sysCat, sysType, sysName, manSys].filter(Boolean).join(' '); // 系统口径
+  const compText = [cat, fam, manDev].filter(Boolean).join(' ');                // 构件口径
+  const equipText = [cat, fam, typeName, manDev].filter(Boolean).join(' ');     // 设备识别口径
   const allText = `${sysText} ${compText}`;
+  const detail = man.ok ? `系统名「${man.system}」` : '';
+  const ret = (code, from) => ({ code, from, detail });
 
   // ① 模型自带专业字段
   const explicit = cleanText(p['专业']) || cleanText(p['专业名称']);
   if (explicit) {
-    if (has(explicit, FIRE_STRONG)) return fireFirst ? 'FIRE' : (fireHostOf(explicit) || 'FIRE');
+    if (has(explicit, FIRE_STRONG)) return ret(fireFirst ? 'FIRE' : (fireHostOf(explicit) || 'FIRE'), 'field');
     const b = bestOf(scoreStrong(explicit));
-    if (b) return b;
+    if (b) return ret(b, 'field');
     const w = scoreWeak(explicit);
-    if (w) return w;
+    if (w) return ret(w, 'field');
   }
 
   // ② 消防优先：系统字段和构件字段都看（消防是职能口径，跨专业存在）
   if (has(allText, FIRE_STRONG)) {
-    return fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE');
+    return ret(fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE'), 'fire');
   }
 
   // ③ BIM 语义层（IFC 实体 / OmniClass 编码）里凡是消防的先落地 —— 消防优先不能漏。
@@ -381,40 +404,56 @@ export function disciplineCode(props, opts = {}) {
   //      划分专业；OmniClass Table 23 的 23-31/33/35/37 就是给排水/暖通/电气/信息通信）
   const bim = ifcDiscipline(p) || omniclassDiscipline(p);
   if (bim === 'FIRE') {
-    return fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE');
+    return ret(fireFirst ? 'FIRE' : (fireHostOf(sysText || compText) || 'FIRE'), 'fire');
   }
 
   // ④ 系统中文语义 —— **比缩写可靠**：模型自己写的「系统分类 / 系统类型」是权威口径，
   //    缩写只是各院自定的代号（同一个 NW，有的指网络，有的指凝结水）。
+  //    手工命名里的系统名也走这一级（它的地位等同系统字段）。
+  const semanticFrom = sysFromManual ? 'manual' : 'semantic';
   const sc = scoreStrong(sysText);
   // 混合水系统：同时含空调类词和排水类词 → 按排水（它是把水排走的系统，
   // 而不是制备冷热水的系统）。例：NW = 空调凝结水 + 坡道雨水。
-  if (has(sysText, DRAIN) && (sc.get('HVAC') || 0) > 0) return 'PLUMB';
+  if (has(sysText, DRAIN) && (sc.get('HVAC') || 0) > 0) return ret('PLUMB', semanticFrom);
   const best = bestOf(sc);
-  if (best) return best;
+  if (best) return ret(best, semanticFrom);
 
   // ⑤ BIM 语义层：IFC 实体 / OmniClass 编码 —— 系统没给答案时，按「这是什么设备」定。
   //    顺序放在系统语义之后是有意的：一台泵在冷冻水系统里属暖通，不能因为它是 IfcPump
   //    就划到给排水；但模型没写系统时，IfcPump 就是最可靠的依据。
-  if (bim) return bim;
+  if (bim) return ret(bim, 'bim');
 
   // ⑥ 系统缩写（模型没给中文语义时才兜底）
-  if (abbr && abbr !== '(未分类)' && ABBR_DISCIPLINE[abbr]) {
-    return ABBR_DISCIPLINE[abbr];
+  if (abbr && abbr !== UNKNOWN_LABEL && ABBR_DISCIPLINE[abbr]) {
+    return ret(ABBR_DISCIPLINE[abbr], 'abbr');
   }
 
-  // ⑦ 兜底：系统名里的泛词 → 构件类别上的强词（如「电缆桥架」）→ 构件泛词
+  // ⑦ 兜底：系统名里的泛词 → 构件类别上的强词（如「电缆桥架」）→ 设备名 → 构件泛词
   const weakSys = scoreWeak(sysText);
-  if (weakSys) return weakSys;
+  if (weakSys) return ret(weakSys, sysFromManual ? 'manual' : 'fallback');
   const strongComp = bestOf(scoreStrong(compText));
-  if (strongComp) return strongComp;
+  if (strongComp) return ret(strongComp, sysFromManual ? 'manual' : 'fallback');
   // 设备名（板式换热器 → 暖通、水泵 → 给排水…）：机械设备这种泛类别靠它定专业
   const equip = bestOf(scoreStrong(equipText, EQUIP));
-  if (equip) return equip;
+  if (equip) return ret(equip, sysFromManual ? 'manual' : 'fallback');
   const weakComp = scoreWeak(compText);
-  if (weakComp) return weakComp;
+  if (weakComp) return ret(weakComp, sysFromManual ? 'manual' : 'fallback');
 
-  return 'NONE';
+  // ⑨ 兜底桶：属性缺失 + 命名不合规 / 系统名认不出
+  return {
+    code: 'NONE',
+    from: 'none',
+    detail: man.ok ? `系统名「${man.system}」认不出专业` : (MANUAL_REASONS[man.reason] || ''),
+  };
+}
+
+/**
+ * 构件 → 专业代码（只要结果）
+ * @param {object} props 构件的 BIM 属性（extras）
+ * @param {{fireFirst?: boolean, name?: string}} [opts]
+ */
+export function disciplineCode(props, opts = {}) {
+  return resolveDiscipline(props, opts).code;
 }
 
 /**
@@ -437,21 +476,27 @@ const GENERIC_CATS = ['常规模型', '机械设备', '专用设备', '设备', 
  *
  * 单看一条属性判不出来的构件，往往能和已经判对的同类构件归到一起：
  * 例如某套模型里「管件」大部分带系统信息、少数没带 —— 没带的那些跟同类走是对的。
- * 规则（三道闸，宁可留未分类也不乱归）：
+ * 规则（三道闸，宁可留在「其他分类」也不乱归）：
  *   1. 只对**非泛类别**生效（机械设备 / 常规模型 / 专用设备 …除外）
- *   2. 该类别里已判对（非未分类）的样本 ≥ 3 条
+ *   2. 该类别里已判对（非其他分类）的样本 ≥ 3 条
  *   3. 这些样本里最高专业占比 ≥ 75%
  *
- * @param {Array<{props: object}>} leaves
- * @returns {Map<object, {label: string, code: string, from: 'rule'|'category'}>}
+ * 判定前先把构件名交给手工命名规则（`系统名_设备名+编号`），所以「其他分类」里的
+ * 手工模型只要名字合规就会先被分掉，走不到多数推断这一层。
+ *
+ * @param {Array<{props: object, name?: string}>} leaves
+ * @returns {Map<object, {label: string, code: string, from: string, detail: string}>}
  */
 export function classifyLeaves(leaves) {
-  const rows = leaves.map((leaf) => ({ leaf, props: leaf.props || {}, code: disciplineCode(leaf.props || {}) }));
+  const rows = leaves.map((leaf) => {
+    const r = resolveDiscipline(leaf.props || {}, { name: leaf.name });
+    return { leaf, code: r.code, from: r.from, detail: r.detail };
+  });
 
   const byCat = new Map();
   for (const r of rows) {
     if (r.code === 'NONE') continue;
-    const cat = categoryKey(r.props);
+    const cat = categoryKey(r.leaf.props || {});
     if (!cat || GENERIC_CATS.includes(cat)) continue;
     let m = byCat.get(cat);
     if (!m) { m = new Map(); byCat.set(cat, m); }
@@ -460,18 +505,21 @@ export function classifyLeaves(leaves) {
 
   const out = new Map();
   for (const r of rows) {
-    let code = r.code;
-    let from = 'rule';
+    let { code, from, detail } = r;
     if (code === 'NONE') {
-      const cat = categoryKey(r.props);
+      const cat = categoryKey(r.leaf.props || {});
       const m = cat && !GENERIC_CATS.includes(cat) ? byCat.get(cat) : null;
       if (m) {
         const total = [...m.values()].reduce((a, b) => a + b, 0);
         const [best, n] = [...m.entries()].sort((a, b) => b[1] - a[1])[0];
-        if (total >= 3 && n / total >= 0.75) { code = best; from = 'category'; }
+        if (total >= 3 && n / total >= 0.75) {
+          code = best;
+          from = 'category';
+          detail = `同类别「${cat}」多数为${disciplineName(best)}`;
+        }
       }
     }
-    out.set(r.leaf, { label: disciplineName(code), code, from });
+    out.set(r.leaf, { label: disciplineName(code), code, from, detail });
   }
   return out;
 }

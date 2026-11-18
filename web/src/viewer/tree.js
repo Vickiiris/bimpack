@@ -20,12 +20,27 @@
 import { setVisible } from './bim-batch.js';
 import { systemName } from './system-names.js';
 import { DISCIPLINES, classifyLeaves, disciplineCode, disciplineName } from './discipline.js';
-import { cleanText as clean, systemAbbr, systemKey, stripAbbrPrefix } from './system-key.js';
+import { UNKNOWN_LABEL, cleanText as clean, systemAbbr, systemKey, systemKeyOf, stripAbbrPrefix } from './system-key.js';
 
 // 兼容既有引用（测试与其它模块一直从 tree.js 取这几个函数）
 export { systemAbbr, systemKey, stripAbbrPrefix };
 
 const MAX_CHILDREN_RENDER = 800;
+
+/**
+ * 叶子 → 系统分类键。
+ *
+ * 属性里有系统信息就照用；属性没有（手工添加的非 BIM 模型）时取名字里的系统名。
+ * 但**系统名认不出专业时不建系统分组** —— 否则「其他分类 > 构件甲」会让人误以为
+ * 「构件甲」是个正经系统，而它其实只是一段没被识别的名字。
+ */
+function sysKeyOfLeaf(props, name) {
+  const key = systemKeyOf(props, name);
+  if (key === UNKNOWN_LABEL) return key;
+  const fromProps = systemKey(props) !== UNKNOWN_LABEL;
+  if (!fromProps && disciplineCode(props, { name }) === 'NONE') return UNKNOWN_LABEL;
+  return key;
+}
 
 /**
  * 分组方式。
@@ -38,20 +53,21 @@ export const GROUP_MODES = {
   unified: {
     label: '专业→系统→类别→类型', group: '规范层级（主线）',
     fields: [
-      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
-      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
-      { key: 'Category Name' },
-      { key: 'Type Name' },
+      { key: '专业', map: (raw, props, leaf) => disciplineName(disciplineCode(props, { name: leaf?.name })), code: (props, name) => disciplineCode(props, { name }), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
+      // 系统键：属性优先；手工模型（无属性）用名字里的「系统名」兜底，见 systemKeyOf
+      { key: '系统名称', map: (raw, props, leaf) => sysKeyOfLeaf(props, leaf?.name), label: '系统', optional: true },
+      { key: 'Category Name', optional: true },
+      { key: 'Type Name', optional: true },
     ],
   },
   unifiedFamily: {
     label: '专业→系统→类别→族→类型', group: '规范层级（主线）',
     fields: [
-      { key: '专业', map: (raw, props) => disciplineName(disciplineCode(props)), code: (props) => disciplineCode(props), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
-      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统', optional: true },
-      { key: 'Category Name' },
+      { key: '专业', map: (raw, props, leaf) => disciplineName(disciplineCode(props, { name: leaf?.name })), code: (props, name) => disciplineCode(props, { name }), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
+      { key: '系统名称', map: (raw, props, leaf) => sysKeyOfLeaf(props, leaf?.name), label: '系统', optional: true },
+      { key: 'Category Name', optional: true },
       { key: '族', optional: true },
-      { key: 'Type Name' },
+      { key: 'Type Name', optional: true },
     ],
   },
   system: {
@@ -85,9 +101,9 @@ export const GROUP_MODES = {
 };
 
 function cmpName(a, b) {
-  // 「未分类」永远排最后，别挡住有类别的构件
-  const ua = a.name === '(未分类)';
-  const ub = b.name === '(未分类)';
+  // 「其他分类」永远排最后，别挡住有类别的构件
+  const ua = a.name === UNKNOWN_LABEL;
+  const ub = b.name === UNKNOWN_LABEL;
   if (ua !== ub) return ua ? 1 : -1;
   return a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true });
 }
@@ -150,13 +166,13 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
 
   // 每层先算好每个叶子的分类键，用两件事：
   //   (a) 折叠「整层只有一个取值」的空层 —— 没有系统字段的建筑/结构模型不该多出
-  //       一层全是「(未分类)」的假层级；整份模型同属一个专业时同理
+  //       一层全是「其他分类」的假层级；整份模型同属一个专业时同理
   //   (b) 后面建立树时不用重复调 map（map 可能读多个字段，不便宜）
   const labelOf = (leaf, f) => {
     const key = typeof f === 'string' ? f : f.key;
     const rawVal = clean(leaf.props[key]);
     // 分类键：有 map 就用归一化结果（如系统缩写），否则用原值
-    const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props))) || '(未分类)';
+    const label = (typeof f === 'string' || !f.map ? rawVal : clean(f.map(rawVal, leaf.props, leaf))) || UNKNOWN_LABEL;
     return { key, rawVal, label };
   };
   // 需要「整批上下文」的层（如专业：要参考同类别其它构件）先算一遍
@@ -164,7 +180,7 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
   const grid = leaves.map((leaf) => fields.map((f, i) => {
     const bv = bulkVals[i]?.get(leaf);
     if (!bv) return labelOf(leaf, f);
-    return { key: typeof f === 'string' ? f : f.key, rawVal: '', label: bv.label, code: bv.code, from: bv.from };
+    return { key: typeof f === 'string' ? f : f.key, rawVal: '', label: bv.label, code: bv.code, from: bv.from, detail: bv.detail };
   }));
   const activeIdx = fields
     .map((_, i) => i)
@@ -187,12 +203,13 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     for (let d = 0; d < activeIdx.length; d++) {
       const i = activeIdx[d];
       const f = fields[i];
-      const { key, rawVal, label, code: bulkCode } = grid[li][i];
+      const { key, rawVal, label, code: bulkCode, from: bulkFrom, detail: bulkDetail } = grid[li][i];
 
-      // 可选层（系统 / 族）没有值时，不给这个构件凭空造一层「(未分类)」——
-      // 建筑构件本来就不属于任何机电系统，直接挂到上一级更符合实际。
+      // 可选层（系统 / 族 / 手工模型缺的类别与类型）没有值时，不给这个构件凭空造一层
+      // 「其他分类」—— 建筑构件本来就不属于任何机电系统，手工模型也没有 Category，
+      // 直接挂到上一级更符合实际。
       // 深度按实际走过的层数算，所以这种构件的叶子会比同层其它构件浅一级。
-      if (typeof f !== 'string' && f.optional && label === '(未分类)') continue;
+      if (typeof f !== 'string' && f.optional && label === UNKNOWN_LABEL) continue;
 
       let m = maps.get(parent);
       if (!m) { m = new Map(); maps.set(parent, m); }
@@ -211,8 +228,12 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
         m.set(label, g);
         parent.children.push(g);
       }
-      // 专业层记下代码，供行上色（渲染时按 disc-XXX 加 class）
-      if (!g.discCode) g.discCode = bulkCode || (typeof f !== 'string' && f.code ? f.code(leaf.props) : '');
+      // 专业层记下代码与判定来源：行上色按 disc-XXX，悬浮提示要说明是怎么归进来的
+      if (!g.discCode) {
+        g.discCode = bulkCode || (typeof f !== 'string' && f.code ? f.code(leaf.props, leaf.name) : '');
+        g.discFrom = bulkFrom || '';
+        g.discDetail = bulkDetail || '';
+      }
       if (rawVal) g.raws.add(rawVal);
       const tn = clean(leaf.props['Type Name']);
       if (tn) g.typeFreq.set(tn, (g.typeFreq.get(tn) || 0) + 1);
@@ -434,6 +455,33 @@ export function createTree(container, opts = {}) {
     return wrap;
   }
 
+  /** 专业层悬浮说明：这一级是按哪条规则归出来的 */
+  const DISC_FROM_TEXT = {
+    field: '模型自带「专业」字段',
+    fire: '消防优先（含消防词，按 GB 55037 单列）',
+    semantic: '系统分类 / 系统类型 / 系统名称的语义',
+    manual: '构件命名规则「系统名_设备名+编号」',
+    bim: 'BIM 语义层（IFC 实体 / OmniClass 编码）',
+    abbr: '系统缩写对照表',
+    fallback: '类别 / 族 / 设备名兜底',
+    category: '同类别多数推断',
+    none: '没有可用依据',
+  };
+
+  function discTitleOf(node) {
+    const lines = [`专业：${node.name}（一级归类）`];
+    if (node.discCode === 'NONE') {
+      lines.push(`进桶原因：${node.discDetail || '没有系统字段，名称也不符合「系统名_设备名+编号」'}`);
+      lines.push('补上属性或按规则改名后会自动归位。');
+    } else {
+      const from = DISC_FROM_TEXT[node.discFrom] || '属性规则';
+      lines.push(`归并依据：${from}${node.discDetail ? ` · ${node.discDetail}` : ''}`);
+      lines.push('依次判：专业字段 → 消防优先 → 系统语义 → BIM 语义 → 系统缩写 → 类别/族');
+    }
+    lines.push(`本专业构件数：${node.count}`);
+    return lines.join('\n');
+  }
+
   function renderNode(node) {
     // 每个节点外面套一个块级 item：子节点容器必须挂在 item 上而不是行上，
     // 否则会被 .node{display:flex;height:24px} 当成一个 flex 子项夹在行里、还裁掉高度
@@ -446,10 +494,8 @@ export function createTree(container, opts = {}) {
     row.style.paddingLeft = `${node.depth * 13 + 2}px`;
     // 分组节点：把归一化前的一串原始取值列在悬浮提示里（如 CN 5 / CN 7 / CN 15 → CN）
     if (node.discCode) {
-      // 专业层：说明这一级是怎么归出来的
-      row.title = `专业：${node.name}（一级归类）\n`
-        + '归并依据：系统缩写 → 系统分类/系统类型 → 类别/族，消防优先单列\n'
-        + `本专业构件数：${node.count}`;
+      // 专业层：说明这一级是怎么归出来的（命名规则 / 同类别多数 / 消防优先…）
+      row.title = discTitleOf(node);
     } else if (node.isGroup && (node.hint || node.raws?.size > 1)) {
       const parts = [];
       if (node.hint) {
