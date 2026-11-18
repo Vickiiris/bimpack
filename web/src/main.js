@@ -94,31 +94,29 @@ const tree = createTree($('tree'), {
   onZoom: (node) => selectNode(node, { zoom: true }),
 });
 
-// 分组方式下拉：按 group 分组成 optgroup —— 主线（规范层级）与局部视图分开，
-// 免得用户以为这是两套并行的树
-const groups = new Map();
+// 分组方式下拉：四种视图平铺。
+// 不分 optgroup —— 只剩四条，分两级反而多占一行、还让人以为是两套并行的树。
+const treeGroupEl = $('treeGroup');
 for (const [id, m] of Object.entries(GROUP_MODES)) {
-  const gname = m.group || '其它';
-  let og = groups.get(gname);
-  if (!og) {
-    og = document.createElement('optgroup');
-    og.label = gname;
-    groups.set(gname, og);
-    $('treeGroup').appendChild(og);
-  }
   const opt = document.createElement('option');
   opt.value = id;
   opt.textContent = m.label;
-  og.appendChild(opt);
+  treeGroupEl.appendChild(opt);
 }
-$('treeGroup').value = tree.mode;
-$('treeGroup').onchange = (e) => {
+const syncModeHint = () => {
+  const m = GROUP_MODES[treeGroupEl.value];
+  treeGroupEl.title = m?.hint || '分组方式';
+};
+treeGroupEl.value = tree.mode;
+treeGroupEl.onchange = (e) => {
   if (!state.sceneRoot || !state.batched) return;
   const res = tree.setMode(e.target.value);
+  syncModeHint();
   if (res) updateTreeCount(res);
   // 树重建后选中态丢了，重新按当前选中回填
   if (lastRec?.object) tree.reveal(lastRec.object);
 };
+syncModeHint();
 
 function updateTreeCount(res) {
   const el = $('treeCount');

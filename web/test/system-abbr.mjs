@@ -81,17 +81,22 @@ sp('排风管', 'EAD', '排风管', '没有前缀时原样返回');
 
 console.log('--- 分组模式注册 ---');
 const sys = GROUP_MODES.system;
-const sysType = GROUP_MODES.systemType;
 const m1 = sys?.fields?.[0]?.map;
-const m2 = sysType?.fields?.[0]?.map;
-const okMode = typeof m1 === 'function' && typeof m2 === 'function'
+const okMode = typeof m1 === 'function'
   && m1('EAD 5', { 系统缩写: 'EAD', 系统名称: 'EAD 5' }) === 'EAD'
-  && m2('CN 7', { 系统名称: 'CN 7' }) === 'CN';
+  && m1('CN 7', { 系统名称: 'CN 7' }) === 'CN';
 if (!okMode) failed++;
-console.log(`${okMode ? '✓' : '✗'} 「系统 → 类别」与「系统 → 类别 → 类型」两档都用系统缩写归一`);
-const okDepth = sys?.fields?.length === 2 && sysType?.fields?.length === 3;
+console.log(`${okMode ? '✓' : '✗'} 「系统 → 类别」用系统缩写归一`);
+const okDepth = sys?.fields?.length === 2;
 if (!okDepth) failed++;
-console.log(`${okDepth ? '✓' : '✗'} 两级 / 三级分组深度正确`);
+console.log(`${okDepth ? '✓' : '✗'} 两级分组深度正确`);
+
+// 下拉精简：只留四种视图，同义变体（族 / 标高 / 系统→类别→类型）不再注册
+const modes = Object.keys(GROUP_MODES);
+const want = ['unified', 'system', 'category', 'raw'];
+const okList = modes.join(',') === want.join(',');
+if (!okList) failed++;
+console.log(`${okList ? '✓' : '✗'} 只剩 4 种视图：${modes.join(' / ')}`);
 
 console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
 process.exitCode = failed ? 1 : 0;

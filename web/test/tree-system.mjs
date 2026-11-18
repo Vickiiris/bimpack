@@ -75,15 +75,16 @@ assert(cr.count === 1 && cr.raws[0] === 'CR 30,CR 18', '多系统值 "CR 30,CR 1
 
 assert(cwp.count === 1 && cwp.raws[0] === 'CWP 3', 'CWP 3 归 CWP（编号不参与判定）');
 
-// 三级模式也存在且能建出三层
-await p.selectOption('#treeGroup', 'systemType');
+// 下拉精简：只留四种视图，同义变体（族 / 标高 / 系统→类别→类型）已下架
+const modes = await p.evaluate(() => [...document.querySelectorAll('#treeGroup option')].map((o) => o.value));
+assert(modes.join(',') === 'unified,system,category,raw', `层级下拉 4 项：${modes.join(' / ')}`);
+
+// 换轴视图「类别 → 类型」还能建出两层
+await p.selectOption('#treeGroup', 'category');
 await p.waitForTimeout(600);
-const depth3 = await p.evaluate(() => {
-  const g = window.__bim.tree.root.children.find((n) => n.name === 'CN');
-  return { l1: g?.name, l2: g?.children.map((c) => c.name), l3: g?.children[0]?.children.map((c) => c.name) };
-});
-console.log('三级分组', JSON.stringify(depth3));
-assert(depth3.l2?.includes('风管') && depth3.l3?.length > 0, '「系统 → 类别 → 类型」三级可用');
+const catTree = await p.evaluate(() => window.__bim.tree.root.children
+  .map((n) => ({ name: n.name, kids: n.children.map((c) => c.name) })));
+assert(catTree.some((n) => n.kids.length > 0), `类别→类型可用：${catTree.map((n) => n.name).join(' / ')}`);
 
 assert(errs.length === 0, `无页面报错${errs.length ? '：' + errs.join(' | ') : ''}`);
 await b.close();

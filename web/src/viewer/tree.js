@@ -43,15 +43,22 @@ function sysKeyOfLeaf(props, name) {
 }
 
 /**
- * 分组方式。
+ * 分组方式（只要四种，别再把「加一层/少一层」的变体都摆出来）。
  *
- * 主线只有一套（unified）：专业 → 系统 → 类别 → 类型 → 构件。
- * 其余是**同一批构件的局部视图**（单轴展开），不是平行的第二套层级 ——
- * 因此构件不会在多棵树里重复出现，计数永远一致。
+ * 主干只有一套（unified）：专业 → 系统 → 类别 → 类型。
+ * 其余三个是同一批构件的**换轴视图**，不是并行的第二棵树 ——
+ * 构件不会在多棵树里重复出现，计数永远一致。
+ *
+ * 刻意下架的变体（原先下拉里有，纯属同义反复）：
+ *   · 专业→系统→类别→族→类型  —— 族与类型语义重叠，族不进主干（属性面板里能看到）
+ *   · 系统→类别→类型          —— 「系统→类别」展开就是类型，少一层不影响找构件
+ *   · 族→类型                 —— 与「类别→类型」近似，族是类别的细分
+ *   · 标高→类别               —— 楼层是空间维度，与系统轴正交，立管跨 31 层无法两全
  */
 export const GROUP_MODES = {
   unified: {
-    label: '专业→系统→类别→类型', group: '规范层级（主线）',
+    label: '专业›系统›类别›类型',
+    hint: '规范层级：专业 → 系统 → 类别 → 类型 → 构件（默认）',
     fields: [
       { key: '专业', map: (raw, props, leaf) => disciplineName(disciplineCode(props, { name: leaf?.name })), code: (props, name) => disciplineCode(props, { name }), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
       // 系统键：属性优先；手工模型（无属性）用名字里的「系统名」兜底，见 systemKeyOf
@@ -60,44 +67,24 @@ export const GROUP_MODES = {
       { key: 'Type Name', optional: true },
     ],
   },
-  unifiedFamily: {
-    label: '专业→系统→类别→族→类型', group: '规范层级（主线）',
-    fields: [
-      { key: '专业', map: (raw, props, leaf) => disciplineName(disciplineCode(props, { name: leaf?.name })), code: (props, name) => disciplineCode(props, { name }), bulk: (leaves) => classifyLeaves(leaves), label: '专业' },
-      { key: '系统名称', map: (raw, props, leaf) => sysKeyOfLeaf(props, leaf?.name), label: '系统', optional: true },
-      { key: 'Category Name', optional: true },
-      { key: '族', optional: true },
-      { key: 'Type Name', optional: true },
-    ],
-  },
   system: {
-    label: '系统→类别', group: '局部视图',
+    label: '系统›类别',
+    hint: '换轴看系统：英文缩写定类别，编号不参与',
     fields: [
       { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
       { key: 'Category Name' },
-    ],
-  },
-  systemType: {
-    label: '系统→类别→类型', group: '局部视图',
-    fields: [
-      { key: '系统名称', map: (raw, props) => systemKey(props || { 系统名称: raw }), label: '系统' },
-      { key: 'Category Name' },
-      { key: 'Type Name' },
     ],
   },
   category: {
-    label: '类别→类型', group: '局部视图',
+    label: '类别›类型',
+    hint: '换轴看构件：Revit 类别 → 类型，与专业无关',
     fields: [{ key: 'Category Name' }, { key: 'Type Name' }],
   },
-  family: {
-    label: '族→类型', group: '局部视图',
-    fields: [{ key: '族' }, { key: 'Type Name' }],
+  raw: {
+    label: '原始结构',
+    hint: '照文件里的节点层级原样铺开（平铺模型会退化成一条长列表）',
+    fields: null,
   },
-  level: {
-    label: '标高→类别', group: '局部视图',
-    fields: [{ key: '参照标高' }, { key: 'Category Name' }],
-  },
-  raw: { label: '原始结构', group: '局部视图', fields: null },
 };
 
 function cmpName(a, b) {
