@@ -189,6 +189,7 @@ bimpack/
 | `batch-attrs.mjs` | 批处理后仍保留 uv / 顶点色的回归 |
 | `batch-default-mat.mjs` | 无材质索引的图元不变黑的回归 |
 | `vc-glass.mjs` | 带顶点色的半透明材质不变黑的回归 |
+| `vc-normalized.mjs` | normalized 顶点属性（顶点色 / 量化坐标 / 交错缓冲）只归一化一次 |
 | `pbr-metal.mjs` | PBR 金属材质不再渲成纯黑（环境反射 / IBL） |
 | `spec-gloss.mjs` | 旧版高光材质加载时自动转换的回归 |
 | `visibility.mjs` | 树勾选显隐、组三态、右键菜单与「全部显示」 |

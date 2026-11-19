@@ -160,8 +160,13 @@ function collect(scene, envMap) {
  * 为什么必须做：meshopt / Draco 的量化会把 POSITION 存成 Int16 normalized 且交错存放
  * （byteStride = 3*2 + padding）。此时：
  *   - `attr.array` 是整段交错缓冲，直接 slice 当单属性用 → count 错乱、取值错位
- *   - normalized 属性的原始值是整数，不反归一化 → 坐标放大成千上万倍
+ *   - normalized 属性的原始值是整数，直接用会让 BatchedMesh 预分配爆掉
  * 这两条都会让 BatchedMesh 预分配爆掉（Reserved space request exceeds...）。
+ *
+ * **反归一化只做一次**：`getComponent()` 从 three r152 起自带 `denormalize()`
+ * （Uint8 的 255 直接给 1.0）。早先这里又在外面除了一次分母，等于把 normalized
+ * 属性压缩了两次：白色顶点色 1.0 → 1/255 ≈ 0.004，乘到底色上整模型发黑；
+ * 量化坐标（Int16）会被再除以 32767，模型直接塌成一个点。改这里务必只取 getComponent。
  */
 function flattenAttribute(geo, name) {
   const a = geo.attributes[name];
@@ -171,21 +176,13 @@ function flattenAttribute(geo, name) {
   const needsConv = interleaved || a.normalized || !(a.array instanceof Float32Array);
   if (!needsConv) return;
 
-  let denom = 1;
-  if (a.normalized) {
-    const arr = a.array;
-    if (arr instanceof Int8Array) denom = 127;
-    else if (arr instanceof Uint8Array) denom = 255;
-    else if (arr instanceof Int16Array) denom = 32767;
-    else if (arr instanceof Uint16Array) denom = 65535;
-  }
-
   const n = a.count;
   const size = a.itemSize;
   const out = new Float32Array(n * size);
   for (let i = 0; i < n; i++) {
     for (let k = 0; k < size; k++) {
-      out[i * size + k] = a.getComponent(i, k) / denom;
+      // getComponent 已按 normalized 反归一化，不能再除分母（会变成双重压缩）
+      out[i * size + k] = a.getComponent(i, k);
     }
   }
   geo.setAttribute(name, new THREE.BufferAttribute(out, size, false));

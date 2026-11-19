@@ -389,6 +389,7 @@ Draco 的**解码器**仍然保留（`public/draco/draco_decoder.js`，asm.js �
 | 金属 / 抛光件纯黑，非金属正常 | `metalness=1` 的材质几乎没有漫反射，颜色**全部来自环境反射**；早先场景里只有平行光、没有 IBL | 用 three 自带的 `RoomEnvironment` 生成 PMREM 环境贴图，按 `metalness²` 挂到金属与透射玻璃上（电介质不挂，避免灰墙被洗白） |
 | 整片发白/发灰、颜色不对 | 旧版 **高光-光泽度** 材质 `KHR_materials_pbrSpecularGlossiness`，three r157 之后已移除支持 | 加载时体检扩展，用 gltf-transform 的 `metalRough()` 就地转成金属-粗糙度，并提示「已把 N 个旧版高光材质转为金属-粗糙度」 |
 | 部分构件黑（墙、型钢） | 图元里没有 material 索引时 GLTFLoader 会造「白 + metalness 1 + roughness 1」的默认材质 | 批处理阶段换成灰白素模材质（`FALLBACK`），见 `test/batch-default-mat.mjs` |
+| 整模型全黑、材质数值却都正常 | 带 `COLOR_0` 的模型被 GLTFLoader 标成 `vertexColors = true`；批处理把 normalized 顶点属性**反归一化了两次**（`getComponent()` 已 denormalize，外面又除了一次分母），白色 255 → 1/255 | 只取 `getComponent()`，不再除分母；`test/vc-normalized.mjs` 守住（否则量化坐标还会被再缩 32767 倍） |
 
 支持的材质扩展（GLTFLoader r170 实现）：`KHR_materials_clearcoat`、`sheen`、`transmission`、
 `volume`、`ior`、`specular`、`iridescence`、`anisotropy`、`dispersion`、`emissive_strength`、
@@ -467,6 +468,7 @@ node test/verify-view.mjs "路径/模型.glb"  # 测取景是否裁切 / 层级�
 node test/discipline.mjs       # 专业归并 + 消防优先
 node test/manual-name.mjs      # 手工命名规则「系统名_设备名+编号」
 node test/pbr-metal.mjs        # PBR 金属不能黑（需 dev 服务）
+node test/vc-normalized.mjs    # normalized 顶点属性只归一化一次（纯 Node，含量化坐标/交错缓冲）
 node test/spec-gloss.mjs       # 旧版高光材质自动转换（需 dev 服务）
 node test/system-abbr.mjs      # 系统缩写解析
 node test/tree-system.mjs      # 系统分组
