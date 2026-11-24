@@ -188,17 +188,41 @@ export const GROUP_MODES = {
           return label;
         },
         code: (props, name) => disciplineCode(props, { name }),
-        bulk: (leaves) => classifyLeaves(leaves),
+        // 整批判一次专业（含「同类别多数」兜底），结果挂到叶子上：
+        // 「管综 › 专业」这一层要按同一个专业分组，不能自己再算一遍（口径会飘）
+        bulk: (leaves) => {
+          const m = classifyLeaves(leaves);
+          for (const [leaf, v] of m) leaf.__disc = v;
+          return m;
+        },
         rank: (label) => DISC_RANK.get(label) ?? 500,
         label: '专业',
       },
       {
         key: '设备分类',
         // 设备给设备分类；智能化设备按系统名显示（智能照明 / 智慧安防）；
-        // 管综 / 建筑结构这两支给 Revit 类别（风管 / 管道 / 墙）
-        map: (raw, props, leaf) => equipOrSystem(props, leaf),
-        rank: (label) => (isKindLabel(label) ? kindRank(label) : 500),
+        // 管综这一支先分**专业方向**（暖通空调 / 给排水 / 消防 / 电气 / 安防…），
+        // 再由下一层按 Revit 类别细分（风管 / 管道 / 电缆桥架）；建筑结构给 Revit 类别
+        map: (raw, props, leaf) => {
+          if (kindOf(props, leaf) === NON_EQUIP) {
+            // 复用第 1 层整批算好的专业（含「同类别多数」兜底），口径与各专业完全一致
+            return leaf.__disc?.label
+              || disciplineName(disciplineCode(props, { name: leaf?.name }));
+          }
+          return equipOrSystem(props, leaf);
+        },
+        // 「管综 › 专业」行也按专业上色，与第 1 层的专业色一致（其余行不上色）
+        code: (props, name) => (equipmentKind(props, name) === NON_EQUIP ? disciplineCode(props, { name }) : ''),
+        rank: (label) => (isKindLabel(label) ? kindRank(label) : (DISC_RANK.get(label) ?? 500)),
         label: '设备分类',
+      },
+      {
+        key: 'Category Name',
+        // 第 3 层**只挂在「管综 › 专业」下面**：按 Revit 类别细分（风管 / 管道 / 电缆桥架 /
+        // 管道附件…），便于按类别筛选。设备 / 智能化 / 建筑结构那几支不再多这一层。
+        only: (props, leaf) => kindOf(props, leaf) === NON_EQUIP,
+        map: (raw, props) => clean(props['Category Name']) || clean(props['类别']) || UNKNOWN_LABEL,
+        label: '类别',
       },
     ],
   },
@@ -315,6 +339,10 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
     .map((_, i) => i)
     .filter((i) => {
       if (fields.length === 1 || i === 0) return true; // 顶层永远保留，单层模式不折叠
+      const f = fields[i];
+      // only：只对部分构件生效的层（如「管综 › 专业 › 类别」只给管综用）。
+      // 一份模型里没有任何构件适用时，整层不出现。
+      if (typeof f !== 'string' && f.only && !leaves.some((l) => f.only(l.props, l))) return false;
       const first = grid[0]?.[i]?.label;
       return grid.some((row) => row[i].label !== first);
     });
@@ -333,6 +361,10 @@ function buildGrouped(sceneRoot, objectToRecs, fields) {
       const i = activeIdx[d];
       const f = fields[i];
       const { key, rawVal, label, code: bulkCode, from: bulkFrom, detail: bulkDetail } = grid[li][i];
+
+      // only 层：不适用于这个构件就跳过（如「管综 › 专业 › 类别」只给管线用，
+      // 设备 / 智能化 / 建筑结构那几支不该多出这一层）
+      if (typeof f !== 'string' && f.only && !f.only(leaf.props, leaf)) continue;
 
       // 可选层（系统 / 族 / 手工模型缺的类别与类型）没有值时，不给这个构件凭空造一层
       // 「其他分类」—— 建筑构件本来就不属于任何机电系统，手工模型也没有 Category，
@@ -622,7 +654,8 @@ export function createTree(container, opts = {}) {
     } else {
       lines.push('管综：管道 / 风管 / 桥架 / 阀门 / 风口 / 支吊架等「线」类构件');
       lines.push('它们不是设备，又常占全楼八成的构件量，混在各专业下会把设备埋掉');
-      lines.push('展开后按 Revit 类别看（风管 / 管道 / 电缆桥架 / 支吊架…）');
+      lines.push('展开后先分**专业方向**（暖通空调 / 给排水 / 消防 / 电气 / 安防…，与第 1 层同名同色），');
+      lines.push('再按 Revit 类别细分（风管 / 管道 / 电缆桥架 / 支吊架…）');
     }
     lines.push(`本类构件数：${node.count}`);
     lines.push('取消左侧勾选即隐藏整类 —— 这就是按分类筛选');
@@ -637,11 +670,15 @@ export function createTree(container, opts = {}) {
   function kindTitleOf(node) {
     const isKind = isKindLabel(node.name);
     const parent = node.parent;
-    // 管综、建筑 / 结构这两支的第 2 层是 Revit 类别；其余专业下不是设备分类名的，
-    // 就是「智能化设备」按系统名分出来的组（智能照明 / 智慧安防）
-    const isCat = !isKind && (parent?.name === NON_EQUIP || parent?.discCode === 'ARCH' || parent?.discCode === 'STR');
+    // 管综这一支是「专业方向 → Revit 类别」：第 2 层是专业（与第 1 层同名同色），
+    // 第 3 层才是类别；建筑 / 结构的第 2 层直接就是 Revit 类别（墙 / 门 / 窗）；
+    // 智能化下不是设备分类名的，是「智能化设备」按系统名分出来的组（智能照明 / 智慧安防）
+    const isPipeDisc = parent?.name === NON_EQUIP;
+    const isCat = node.fieldLabel === '类别'
+      || (!isKind && (parent?.discCode === 'ARCH' || parent?.discCode === 'STR'));
     const isSmartSys = parent?.name === SMART_GROUP;
-    const head = isKind ? (node.fieldLabel || '设备类型') : (isCat ? '类别' : (isSmartSys ? '系统' : SMART_KIND));
+    const head = isKind ? (node.fieldLabel || '设备类型')
+      : (isPipeDisc ? '专业' : (isCat ? '类别' : (isSmartSys ? '系统' : SMART_KIND)));
     const lines = [`${head}：${node.name}`];
     if (node.name === OTHER_EQUIP) {
       lines.push('类别写着机械设备 / 专用设备 / 设备，但名称里认不出具体型号');
@@ -656,6 +693,10 @@ export function createTree(container, opts = {}) {
       lines.push('名称里带「智能 / 智慧」的设备，按系统名分组（智能照明 / 智慧安防）');
       lines.push('与主干视图「专业 → 系统 → …」里的系统层同名，两边对得上');
       lines.push('这一组都是智能化设备；要看各自的类别与型号，切回主干视图');
+    } else if (isPipeDisc) {
+      lines.push('管综里的专业方向：按构件所属系统 / 类别 / IFC 实体判定，与第 1 层各专业同一套规则、同名同色');
+      lines.push('展开后可再按 Revit 类别细分（风管 / 管道 / 电缆桥架 / 管道附件…）');
+      lines.push('取消勾选即隐藏该专业方向下的全部管线');
     } else if (node.name === UNKNOWN_LABEL) {
       lines.push('没有 Revit 类别（手工添加的非 BIM 模型常见），只能按名称归到这一支');
     } else if (head === '类别') {
@@ -700,7 +741,7 @@ export function createTree(container, opts = {}) {
     if (isBucket) {
       // 第 1 层的「管综」：说清它为什么单独成一级、里面怎么展开
       row.title = bucketTitleOf(node);
-    } else if (node.field === '设备类型' || node.field === '设备分类') {
+    } else if (node.field === '设备类型' || node.field === '设备分类' || node.fieldLabel === '类别') {
       // 第 3 层：设备类型（设备）或 Revit 类别（管综 / 建筑结构），顺带说怎么拿它筛选
       row.title = kindTitleOf(node);
     } else if (node.discCode) {

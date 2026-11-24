@@ -7,7 +7,8 @@
  *   - 电气：配电柜 / 其他设备；给排水：水箱
  *   - **智能化单独成一级**：名称带「智能 / 智慧」的设备全收在这里，第二层按系统名分组
  *     （智能照明 / 智慧安防，与主干视图的系统层同名），不再散在电气 / 安防下面
- *   - **管综单独成一级、排最后**，第二层是 Revit 类别（风管 / 管道 / 电缆桥架 / 管道附件）
+ *   - **管综单独成一级、排最后**，内部先分**专业方向**（暖通空调 / 给排水 / 电气 / 安防…，
+ *     与第 1 层同名同色），再按 Revit 类别细分（风管 / 管道 / 电缆桥架 / 管道附件）
  *   - 建筑构件不并进设备分类：建筑 → 墙
  *   - 一级按业务序排（暖通 → 给排水 → 电气 → 建筑 → 智能化 → 管综），不是拼音序
  *   - 与其它档同源：叶子总数 = 构件总数（18），切换视图不重不漏
@@ -74,7 +75,8 @@ assert(order[order.length - 1] === '管综', '管综单独成一级、排最后'
 assert(order[order.length - 2] === '智能化', '智能化单独成一级、紧挨着排在管综之前');
 assert(info.top.at(-1).disc === '' && info.top.at(-2).disc === '',
   '智能化 / 管综都不挂专业颜色（它们不是专业）');
-assert(info.maxGroupDepth === 2, `只有两层分组（专业 / 设备分类），实际 ${info.maxGroupDepth}`);
+assert(info.maxGroupDepth === 3,
+  `设备分支两层（专业 / 设备分类）、管综分支三层（管综 / 专业 / 类别），实际最深 ${info.maxGroupDepth}`);
 
 const byName = (n) => info.top.find((t) => t.name === n);
 assert(byName('暖通空调')?.kids.join(' / ') === '空调机柜 / 新风机组 / 风机盘管 / 水泵',
@@ -87,9 +89,42 @@ assert(!byName('安防'), '安防里只有智能设备，已整体并入「智�
 assert(byName('智能化')?.kids.slice().sort().join(' / ') === '智慧安防 / 智能照明'.split(' / ').sort().join(' / '),
   `智能化下按系统名分组：${byName('智能化')?.kids.join(' / ')}`);
 assert(byName('建筑')?.kids.join(' / ') === '墙', '建筑构件不并进设备分类：建筑 → 墙');
-assert(byName('管综')?.kids.slice().sort().join(' / ')
-  === ['其他分类', '管道', '管道附件', '风管', '电缆桥架'].sort().join(' / '),
-  `管综下按 Revit 类别：${byName('管综')?.kids.join(' / ')}`);
+// 管综：先按专业方向拆（与第 1 层同名同色），再按 Revit 类别细分
+assert(byName('管综')?.kids.join(' / ') === '暖通空调 / 给排水 / 电气 / 安防',
+  `管综下先分专业方向（按业务序）：${byName('管综')?.kids.join(' / ')}`);
+
+const nodeAt = (...names) => {
+  let cur = { kids: info.tree };
+  for (const n of names) cur = cur?.kids?.find((k) => k.name === n);
+  return cur;
+};
+assert(nodeAt('管综', '暖通空调')?.kids.map((k) => k.name).join(' / ') === '风管 / 管道',
+  `管综 › 暖通空调 下按 Revit 类别：${nodeAt('管综', '暖通空调')?.kids.map((k) => k.name).join(' / ')}`);
+assert(nodeAt('管综', '暖通空调', '风管')?.count === 1
+  && nodeAt('管综', '暖通空调', '管道')?.count === 1, '管综 › 暖通空调 › 风管 / 管道 各 1 件');
+assert(nodeAt('管综', '给排水', '管道附件')?.count === 1, '管综 › 给排水 › 管道附件 1 件（压力传感器）');
+assert(nodeAt('管综', '电气', '电缆桥架')?.count === 1, '管综 › 电气 › 电缆桥架 1 件（强电桥架）');
+assert(nodeAt('管综', '安防', '其他分类')?.count === 1,
+  '管综 › 安防 › 其他分类 1 件（手工模型没有 Revit 类别）');
+
+// 专业方向与第 1 层「同名同色」：名字取自同一张 DISCIPLINES 表，色点也是同一套 disc-XXX
+const pipeDiscs = await p.evaluate(() => {
+  const top = window.__bim.tree.root.children;
+  const pipe = top.find((n) => n.name === '管综');
+  const codeOf = (name) => top.find((n) => n.name === name)?.discCode || '';
+  return {
+    pipeCode: pipe?.discCode || '',
+    hvac: codeOf('暖通空调'),
+    hvacInPipe: pipe?.children.find((n) => n.name === '暖通空调')?.discCode || '',
+    plumbInPipe: pipe?.children.find((n) => n.name === '给排水')?.discCode || '',
+    elecInPipe: pipe?.children.find((n) => n.name === '电气')?.discCode || '',
+  };
+});
+assert(!pipeDiscs.pipeCode, '管综一级自身不挂专业色（中性灰点）');
+assert(pipeDiscs.hvac === 'HVAC' && pipeDiscs.hvacInPipe === 'HVAC',
+  `管综 › 暖通空调 与第 1 层「暖通空调」同色（${pipeDiscs.hvacInPipe}）`);
+assert(pipeDiscs.plumbInPipe === 'PLUMB' && pipeDiscs.elecInPipe === 'ELEC',
+  `专业方向各自用本专业的色（给排水 ${pipeDiscs.plumbInPipe} / 电气 ${pipeDiscs.elecInPipe}）`);
 
 // 计数细项
 const at = (pathStr) => {
@@ -101,13 +136,32 @@ assert(at('智能化 > 智能照明')?.count === 1, '智能化 > 智能照明 1 
 assert(at('智能化 > 智慧安防')?.count === 1, '智能化 > 智慧安防 1 件（手工摄像头）');
 assert(byName('智能化')?.count === 2, `智能化一级共 2 件，实际 ${byName('智能化')?.count}`);
 assert(at('暖通空调 > 风机盘管')?.count === 1, '暖通空调 > 风机盘管 1 件');
-assert(at('管综 > 风管')?.count === 1 && at('管综 > 管道')?.count === 1, '管综 > 风管 / 管道 各 1 件');
+
 // 建筑构件不被「电梯」抓走：电梯井道轻质隔墙仍在「建筑 > 墙」
 // 名字带「防火」的 3H 防火板墙同理 —— 墙就是墙，不进消防专业
 assert(at('建筑 > 墙')?.count === 3,
   `建筑 > 墙 3 件（含电梯井道隔墙与 3H 防火板墙），实际 ${at('建筑 > 墙')?.count}`);
 assert(!info.top.some((t) => t.name === '消防'), '消防里没有墙 —— 防火板墙没被「防火」二字拉走');
 assert(!info.top.some((t) => t.name === '电梯设备'), '没有凭空出现「电梯设备」分类');
+
+// 悬浮提示：管综下的两层各是什么（专业方向 / Revit 类别），别把「专业」说成「设备分类」
+const pipeTitles = await p.evaluate(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nm = (r) => r.querySelector('.node-name')?.textContent;
+  const row = (name, depth) => [...document.querySelectorAll('#tree .node')]
+    .find((r) => nm(r) === name && r.__node?.depth === depth);
+  row('管综', 1)?.querySelector('.node-caret')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await wait(250);
+  const sub = row('暖通空调', 2);
+  const subTitle = sub?.title || '';
+  sub?.querySelector('.node-caret')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await wait(250);
+  return { subTitle, catTitle: row('风管', 3)?.title || '' };
+});
+assert(pipeTitles.subTitle.startsWith('专业：暖通空调'),
+  `管综下的第 2 层标成「专业」（${pipeTitles.subTitle.split('\n')[0]}）`);
+assert(pipeTitles.catTitle.startsWith('类别：风管'),
+  `管综 › 专业下的第 3 层标成「类别」（${pipeTitles.catTitle.split('\n')[0]}）`);
 
 // 手工件（无 extras）路径：专业 > 设备分类 > 构件
 const lampPath = await p.evaluate(() => {

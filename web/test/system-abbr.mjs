@@ -109,11 +109,12 @@ console.log(`${okGone ? '✓' : '✗'} 「系统›专业›设备」已下架`)
 
 // 新增的两级视图：专业 → 设备分类，管综单独成一级
 const de = GROUP_MODES.discEquip;
-const okDeDepth = de?.fields?.length === 2
+const okDeDepth = de?.fields?.length === 3
   && de.fields[0].key === '专业' && de.fields[0].label === '专业'
-  && de.fields[1].key === '设备分类' && de.fields[1].label === '设备分类';
+  && de.fields[1].key === '设备分类' && de.fields[1].label === '设备分类'
+  && de.fields[2].key === 'Category Name' && de.fields[2].label === '类别';
 if (!okDeDepth) failed++;
-console.log(`${okDeDepth ? '✓' : '✗'} 两级视图字段是「专业 → 设备分类」`);
+console.log(`${okDeDepth ? '✓' : '✗'} 两级视图字段是「专业 → 设备分类 →（仅管综）类别」`);
 const okDePipe = typeof de?.fields?.[0]?.fix === 'function'
   && de.fields[0].fix('暖通空调', { 'Category Name': '风管' }, { name: '送风管 SF 1' }) === '管综'
   && de.fields[0].fix('暖通空调', {}, { name: '风机盘管 FCU-01' }) === '暖通空调';
@@ -124,9 +125,19 @@ const okDeRank = typeof de?.fields?.[0]?.rank === 'function'
 if (!okDeRank) failed++;
 console.log(`${okDeRank ? '✓' : '✗'} 两级视图的专业按业务序排（暖通在前、管综压最后）`);
 const okDeKind = de?.fields?.[1]?.map?.('', {}, { name: '风机盘管 FCU-01' }) === '风机盘管'
-  && de.fields[1].map('', { 'Category Name': '风管' }, { name: '送风管 SF 1' }) === '风管';
+  && de.fields[1].map('', { 'Category Name': '风管' }, { name: '送风管 SF 1' }) === '暖通空调'
+  && de.fields[1].map('', { 'Category Name': '风管', 系统名称: '排烟' }, { name: '排烟风管' }) === '消防';
 if (!okDeKind) failed++;
-console.log(`${okDeKind ? '✓' : '✗'} 第二层：设备给设备分类、管综给 Revit 类别`);
+console.log(`${okDeKind ? '✓' : '✗'} 第二层：设备给设备分类、管综给专业方向（风管 → 暖通 / 排烟 → 消防）`);
+
+// 第 3 层只挂在「管综 › 专业」下面，设备分支不多这一层
+const okDeThird = de?.fields?.[2]?.label === '类别'
+  && typeof de.fields[2].only === 'function'
+  && de.fields[2].only({ 'Category Name': '风管' }, { name: '送风管 SF 1' }) === true
+  && de.fields[2].only({ 'Category Name': '机械设备' }, { name: '风机盘管 FCU-01' }) === false
+  && de.fields[2].map('', { 'Category Name': '风管' }) === '风管';
+if (!okDeThird) failed++;
+console.log(`${okDeThird ? '✓' : '✗'} 第三层「类别」只对管综生效（设备分支不再多一层）`);
 
 console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
 process.exitCode = failed ? 1 : 0;
