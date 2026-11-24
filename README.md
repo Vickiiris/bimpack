@@ -7,7 +7,7 @@
 bimpack 处理 BIM 软件（Revit / 3ds Max 等）导出的 `.glb` 模型，一套代码两种用法：
 
 - **`web/`**：纯前端单页应用。把模型拖进浏览器即可预览、查看 BIM 属性、按属性合成
-  「专业 → 系统 → 类别 → 类型 → 构件」规范层级树；需要交付时再压缩，通过校验后下载。
+  「专业 → 系统 → 类别 → 类型 → 构件」规范层级树，另可切 专业›设备分类（两级；智能化与管综各自单独成一级）/ 系统›类别 / 类别›类型；需要交付时再压缩，通过校验后下载。
   文件不上传、不需要服务端。
 - **`src/`**：同一套逻辑的命令行版。批量做 Draco 压缩、属性校验、预压缩（`.br` / `.gz`）
   并生成交付报告，适合成批出包或机器跑不动浏览器时使用。
@@ -163,8 +163,9 @@ bimpack/
 |---|---|
 | `scene.js` | 相机、光照、自动取景、点击/拖拽判定、FPS |
 | `bim-batch.js` | 把上万个独立 Mesh 合并为按材质分组的 BatchedMesh，保留逐构件拾取与显隐 |
-| `tree.js` | 层级树：四种视图（规范层级 / 系统›类别 / 类别›类型 / 原始结构）、懒加载、名称搜索、显示/隐藏 |
+| `tree.js` | 层级树：五种视图（专业›系统›类别›类型 / 专业›设备分类 / 系统›类别 / 类别›类型 / 原始结构）、懒加载、名称搜索、显示/隐藏 |
 | `discipline.js` | 「专业」判定规则：系统语义优先，缩写、IFC/OmniClass 语义层依次兜底 |
+| `equipment.js` | 设备类型判定：配电柜 / 水箱 / 空调机柜 / 新风机组 / 智能化设备… 管道风管桥架归「管综」，建筑结构只留「建筑结构」 |
 | `system-key.js` | 从属性中提取系统缩写，去掉其后的编号；属性缺失时用构件名兜底 |
 | `manual-name.js` | 解析手工命名「系统名_设备名+编号」，供专业判定与系统分组使用 |
 | `system-names.js` | 系统缩写到中文系统名的对照表 |
@@ -189,10 +190,13 @@ bimpack/
 | `batch-attrs.mjs` | 批处理后仍保留 uv / 顶点色的回归 |
 | `batch-default-mat.mjs` | 无材质索引的图元不变黑的回归 |
 | `vc-glass.mjs` | 带顶点色的半透明材质不变黑的回归 |
+| `equipment.mjs` | 设备类型判定：设备词表 / 管综 / 其他设备 / 建筑结构，含建筑结构一票否决与 IFC 兜底 |
+| `smart-equip.mjs` | 「智能化设备」：名称带智能/智慧即归此桶，管线与建筑构件不被拉走，系统名不参与 |
+| `tree-disc-equip.mjs` | 两级视图（专业›设备分类；智能化、管综各自单独成一级，行格式与专业一致） |
 | `vc-normalized.mjs` | normalized 顶点属性（顶点色 / 量化坐标 / 交错缓冲）只归一化一次 |
 | `pbr-metal.mjs` | PBR 金属材质不再渲成纯黑（环境反射 / IBL） |
 | `spec-gloss.mjs` | 旧版高光材质加载时自动转换的回归 |
 | `visibility.mjs` | 树勾选显隐、组三态、右键菜单与「全部显示」 |
 | `click-clear.mjs` | 点构件高亮、点空白处取消 |
-| `fixture-systems.glb`、`fixture-unified.glb`、`fixture-vc-glass.glb` | 各类测试用的内置小样 |
+| `fixture-systems.glb`、`fixture-unified.glb`、`fixture-vc-glass.glb`、`fixture-equipment.glb` | 各类测试用的内置小样（设备样例 16 个构件，可用 `make-fixture-equipment.mjs` 重造） |
 | `shot-*.png` | 测试过程截图（不入库） |

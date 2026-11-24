@@ -75,9 +75,9 @@ assert(cr.count === 1 && cr.raws[0] === 'CR 30,CR 18', '多系统值 "CR 30,CR 1
 
 assert(cwp.count === 1 && cwp.raws[0] === 'CWP 3', 'CWP 3 归 CWP（编号不参与判定）');
 
-// 下拉精简：只留四种视图，同义变体（族 / 标高 / 系统→类别→类型）已下架
+// 下拉视图：同义变体（族 / 标高 / 系统→类别→类型 / 系统›专业›设备）已下架
 const modes = await p.evaluate(() => [...document.querySelectorAll('#treeGroup option')].map((o) => o.value));
-assert(modes.join(',') === 'unified,system,category,raw', `层级下拉 4 项：${modes.join(' / ')}`);
+assert(modes.join(',') === 'unified,discEquip,system,category,raw', `层级下拉 5 项：${modes.join(' / ')}`);
 
 // 换轴视图「类别 → 类型」还能建出两层
 await p.selectOption('#treeGroup', 'category');

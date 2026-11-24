@@ -21,6 +21,8 @@
  *
  * 判定优先级（从强到弱，先命中先返回）：
  *   ① 模型自带 `专业` / `专业名称` 字段
+ *   ①b **建筑构件类别一票否决**：墙 / 门 / 窗 / 楼板 / 梁 / 柱 / 幕墙 → 建筑（或结构）
+ *      —— 防火板墙、防火门、防火卷帘名字里带「防火」，但它们是建筑构件，不进消防
  *   ② **消防优先**：任一系统字段或类别含消防/排烟/喷淋/火警等词 → 消防
  *      （排烟风管属暖通设备、喷淋属给排水管材，但按 GB 55037 与消防各专项验收规范
  *        必须单列成独立系统，不能拆散到暖通/给排水里）
@@ -45,13 +47,27 @@
 import { cleanText, systemKey, UNKNOWN_LABEL } from './system-key.js';
 import { MANUAL_REASONS, parseManualName } from './manual-name.js';
 
+/**
+ * ELV 专业的显示名。
+ *
+ * 机电专业划分里这个专业常叫「智能化 / 弱电」，本项目（117 大厦）按「安防」呈现 ——
+ * 它下面的系统就是智慧安防（摄像头 / 门禁 / 报警），叫「智能化」反而跟
+ * 「智能化设备」这一设备类型撞名，树上看是「智能化设备 > 智能化 > 智慧安防」，
+ * 父子两层同名，容易误读。
+ *
+ * 只改显示名，不改代码与判定：`ELV` 这个键、下方的关键词表（智能化 / 弱电 / 网络 /
+ * 综合布线 / 监控 / 门禁 / 广播 / 安防）全部照旧，颜色 class 也仍是 `disc-ELV`。
+ * 换项目要回旧称时，只改这一行。
+ */
+const ELV_LABEL = '安防';
+
 /** 专业定义：name 是树里显示的名字，order 只影响排序 */
 export const DISCIPLINES = {
   HVAC: { name: '暖通空调', order: 10 },
   PLUMB: { name: '给排水', order: 20 },
   FIRE: { name: '消防', order: 30 },
   ELEC: { name: '电气', order: 40 },
-  ELV: { name: '智能化', order: 50 },
+  ELV: { name: ELV_LABEL, order: 50 },
   GAS: { name: '燃气', order: 55 },
   ARCH: { name: '建筑', order: 80 },
   STR: { name: '结构', order: 81 },
@@ -153,6 +169,44 @@ const EQUIP = [
 /** 消防强词。刻意不收裸「报警」—— 入侵报警、防盗报警属安防（智能化） */
 const FIRE_STRONG = ['消防', '喷淋', '消火栓', '消火', '排烟', '防烟', '防火',
   '火警', '火灾', '灭火', '应急照明', '疏散', 'fire', 'sprinkler', 'smoke'];
+
+/**
+ * 建筑构件类别（Revit 类别名）。这些类别**只可能是建筑构件**，不可能是机电设备或管线。
+ * 幕墙系列（幕墙竖梃 / 幕墙嵌板）用前缀判。
+ */
+const ARCH_CATS = [
+  '墙', '门', '窗', '楼板', '地板', '天花板', '吊顶', '屋顶', '楼梯', '栏杆', '扶手',
+  '坡道', '台阶', '散水', '雨棚', '场地', '地形', '家具', '家具系统',
+];
+
+/** 结构构件类别 */
+const STRUCT_CATS = [
+  '结构柱', '结构框架', '结构基础', '结构梁', '基础', '柱', '梁', '桁架', '支撑', '钢筋',
+];
+
+/**
+ * 建筑构件类别 → 专业代码（建筑 / 结构），不是建筑构件返回空串。
+ *
+ * 这一段是**专业层的一票否决**，专治「防火板墙被拉进消防」这类错判：
+ * `基本墙_3H防火板墙_150` 的名字里带「防火」，② 消防优先会命中 FIRE，
+ * 于是这堵墙出现在「消防 › 墙」下面 —— 但墙就是墙。防火板墙、防火门、防火卷帘、
+ * 防火窗都是**建筑构件**，属于建筑（分隔 / 构造）专业；消防专业管的是消防系统本体
+ * （喷淋、消火栓、火灾报警、防排烟、灭火设施），不含建筑分隔构件。
+ *
+ * 口径与 `equipment.js` 的「建筑构件类别一票否决」一致 —— 同一根构件在
+ * 「专业›系统›类别›类型」与「专业›设备分类」两档里不会一边算消防、一边算建筑。
+ */
+export function buildingCatCode(cat) {
+  const c = cleanText(cat);
+  if (!c) return '';
+  if (c.startsWith('幕墙')) return 'ARCH';
+  if (STRUCT_CATS.includes(c)) return 'STR';
+  if (ARCH_CATS.includes(c)) return 'ARCH';
+  return '';
+}
+
+/** 类别是否建筑 / 结构构件（equipment.js 的建筑结构否决也用它，口径只维护一份） */
+export const isBuildingCat = (cat) => !!buildingCatCode(cat);
 
 /* ------------------------------------------------------------------ *
  * BIM 语义层：IFC 实体 + OmniClass 编码
@@ -392,6 +446,15 @@ export function resolveDiscipline(props, opts = {}) {
     if (b) return ret(b, 'field');
     const w = scoreWeak(explicit);
     if (w) return ret(w, 'field');
+  }
+
+  // ①b 建筑构件类别一票否决：墙 / 门 / 窗 / 楼板 / 梁 / 柱 / 幕墙…
+  //    `基本墙_3H防火板墙_150` 名字里带「防火」，② 消防优先会把它判成消防，
+  //    可墙就是墙 —— 防火板墙、防火门、防火卷帘都是建筑构件，不能进消防专业。
+  //    所以类别是建筑 / 结构构件的，直接按建筑（或结构）定，比任何关键词都权威。
+  const buildCode = buildingCatCode(cat);
+  if (buildCode) {
+    return { code: buildCode, from: 'arch', detail: `类别「${cat}」是建筑构件` };
   }
 
   // ② 消防优先：系统字段和构件字段都看（消防是职能口径，跨专业存在）

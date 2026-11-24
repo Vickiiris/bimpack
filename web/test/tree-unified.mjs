@@ -54,7 +54,7 @@ const info = await p.evaluate(() => {
 });
 
 const names = info.top.map((t) => t.name).sort();
-assert(names.join('|') === '消防|暖通空调|给排水|电气|智能化|建筑|其他分类'.split('|').sort().join('|'),
+assert(names.join('|') === '消防|暖通空调|给排水|电气|安防|建筑|其他分类'.split('|').sort().join('|'),
   `第一层是专业：${names.join(' / ')}`);
 
 const byName = (n) => info.top.find((t) => t.name === n);
@@ -69,13 +69,13 @@ const plumbLeaves = await p.evaluate(() => {
   return g ? walk(g) : [];
 });
 assert(plumbLeaves.some((n) => n.includes('特殊部件 D')), '无系统信息的「特殊部件 D」跟同类归到给排水');
-assert(byName('电气')?.count === 2 && byName('智能化')?.count === 1,
-  `电气 2（桥架 + 手工筒灯）/ 智能化 1（同类别桥架按专业分开），实际 ${byName('电气')?.count} / ${byName('智能化')?.count}`);
+assert(byName('电气')?.count === 2 && byName('安防')?.count === 1,
+  `电气 2（桥架 + 手工筒灯）/ 安防 1（同类别桥架按专业分开），实际 ${byName('电气')?.count} / ${byName('安防')?.count}`);
 
 // 回归：缩写 NW 在别处常指 network，但这套模型的系统类型写明是空调凝结水+坡道雨水
 const plumb = info.tree.find((t) => t.name === '给排水');
 assert(plumb.kids.some((c) => c.name === 'NW'), `给排水下有 NW 系统：${plumb.kids.map((c) => c.name).join(' / ')}`);
-assert(!info.tree.find((t) => t.name === '智能化').kids.some((c) => c.name === 'NW'), 'NW 没有被缩写表拉进智能化');
+assert(!info.tree.find((t) => t.name === '安防').kids.some((c) => c.name === 'NW'), 'NW 没有被缩写表拉进安防（ELV）');
 assert(byName('建筑')?.count === 1, '建筑 1 件（无系统字段的墙）');
 
 // 消防优先：排烟风管进消防，不因「类别=风管」被拉去暖通

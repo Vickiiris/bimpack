@@ -86,11 +86,15 @@ if (ok) {
   log(`  构件      ${stats.parts}`);
   log(`  层级树    ${stats.treeCount} / 已渲染 ${stats.treeRows} 行`);
 
-  // 分组树默认只展开到「类别」，先逐层展开到出现构件行（◆）再点
+  // 分组树默认只展开到「专业」，先逐层展开到出现可见的构件行（◆）再点。
+  // 注意要判「可见」：折叠分支里的行其实已经建好 DOM、只是被隐藏，
+  // 只看 DOM 里有没有 mesh 行会立刻返回、然后点到一个看不见的元素上。
   await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    for (let i = 0; i < 6; i++) {
-      if (document.querySelector('#tree .node .node-icon.mesh')) return;
+    const hasVisibleMesh = () => [...document.querySelectorAll('#tree .node .node-icon.mesh')]
+      .some((el) => el.offsetParent !== null);
+    for (let i = 0; i < 12; i++) {
+      if (hasVisibleMesh()) return;
       const closed = [...document.querySelectorAll('#tree .node.is-group')]
         .filter((r) => r.__node?.depth >= 1 && !(r.__wrap && r.__wrap.classList.contains('open')));
       if (!closed.length) return;
@@ -99,7 +103,7 @@ if (ok) {
     }
   });
   await page.waitForTimeout(200);
-  const meshRow = page.locator('#tree .node', { has: page.locator('.node-icon.mesh') }).first();
+  const meshRow = page.locator('#tree .node:visible', { has: page.locator('.node-icon.mesh') }).first();
   const hasMeshRow = await meshRow.count();
   if (hasMeshRow) {
     await meshRow.click();

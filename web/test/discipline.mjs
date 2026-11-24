@@ -4,6 +4,7 @@
  * node test/discipline.mjs
  */
 import { disciplineCode, disciplineName, ABBR_DISCIPLINE, POLICY, classifyLeaves } from '../src/viewer/discipline.js';
+import { equipmentKind, NON_MEP } from '../src/viewer/equipment.js';
 
 let failed = 0;
 const eq = (props, want, msg, opts) => {
@@ -37,7 +38,7 @@ eq({ 系统名称: '冷凝水 2', 'Category Name': '管道' }, 'HVAC', '冷凝�
 
 console.log('--- 系统中文语义优先于缩写（NW 误判成智能化的回归）---');
 eq({ 系统缩写: 'NW', 系统分类: '排水', 系统类型: 'NW-空调凝结水、坡道雨水', 'Category Name': '管道' }, 'PLUMB',
-  'NW = 空调凝结水+坡道雨水 → 给排水（不是智能化）');
+  'NW = 空调凝结水+坡道雨水 → 给排水（不是安防/ELV）');
 eq({ 系统类型: 'NW-空调凝结水、坡道雨水', 'Category Name': '管道' }, 'PLUMB',
   '即使没有系统分类，混合水系统也按排水');
 eq({ 系统缩写: 'NW', 'Category Name': '管道' }, 'PLUMB', '缩写 NW 不再当网络，回落到类别');
@@ -151,8 +152,8 @@ eq({ '导出类型到 IFC': 'IfcFireSuppressionTerminal' }, 'FIRE', 'IfcFireSupp
 eq({ '导出类型到 IFC': 'IfcLightFixture' }, 'ELEC', 'IfcLightFixture → 电气');
 eq({ '导出类型到 IFC': 'IfcCableCarrierSegment' }, 'ELEC', '桥架段 → 电气');
 eq({ '导出类型到 IFC': 'IfcTransformer' }, 'ELEC', '变压器 → 电气');
-eq({ '导出类型到 IFC': 'IfcCommunicationsAppliance' }, 'ELV', '通信设备 → 智能化');
-eq({ '导出类型到 IFC': 'IfcSensor' }, 'ELV', '传感器 → 智能化');
+eq({ '导出类型到 IFC': 'IfcCommunicationsAppliance' }, 'ELV', '通信设备 → 安防（ELV）');
+eq({ '导出类型到 IFC': 'IfcSensor' }, 'ELV', '传感器 → 安防（ELV）');
 eq({ '导出类型到 IFC': 'IfcColumn' }, 'STR', 'IfcColumn → 结构');
 eq({ '导出类型到 IFC': 'IfcPump', 系统分类: '冷冻水' }, 'HVAC', '系统优先于设备类型：冷冻水泵归暖通');
 eq({ '导出类型到 IFC': 'IfcFireSuppressionTerminal', 系统分类: '给水' }, 'FIRE', '消防实体压过系统字段');
@@ -165,11 +166,31 @@ eq({ 'OmniClass 编号': '23.33.00.00' }, 'HVAC', '23-33 暖通');
 eq({ 'OmniClass 编号': '23.31.11.00' }, 'PLUMB', '23-31 给排水');
 eq({ 'OmniClass 编号': '23.35.47.11' }, 'ELEC', '23-35 电气（灯具）');
 eq({ 'OmniClass 编号': '23.37.11.00' }, 'ELV', '23-37 信息通信');
-eq({ 'OmniClass 编号': '23.29.11.11', 'OmniClass 标题': 'CCTV' }, 'ELV', '23-29 里的安防 → 智能化');
+eq({ 'OmniClass 编号': '23.29.11.11', 'OmniClass 标题': 'CCTV' }, 'ELV', '23-29 里的安防 → 安防（ELV）');
 eq({ 'OmniClass 编号': '23.29.29.00', 'OmniClass 标题': 'Fire Detection Devices' }, 'FIRE', '23-29 里的火灾探测 → 消防');
 eq({ 'OmniClass 标题': 'Plumbing Fixtures' }, 'PLUMB', '只有英文标题也能判');
 eq({ 'Category Name': '机械设备', 族: '未知设备', 'OmniClass 编号': '23.33.00.00' }, 'HVAC',
   '机械设备 + OmniClass 暖通 → 暖通（泛类别终于有依据了）');
+
+console.log('--- 建筑构件类别一票否决（防火板墙不进消防）---');
+eq({ 'Category Name': '墙', 族: '基本墙', 'Type Name': '3H防火板墙_150' }, 'ARCH',
+  '防火板墙：类别是墙 → 建筑（不被「防火」拉进消防）', { name: '基本墙_3H防火板墙_150_1055' });
+eq({ 'Category Name': '门', 族: '智能防火门' }, 'ARCH',
+  '智能防火门：类别是门 → 建筑', { name: '门 | 智能防火门' });
+eq({ 'Category Name': '幕墙嵌板', '系统名称': '防火分区' }, 'ARCH',
+  '幕墙嵌板（前缀判）→ 建筑');
+eq({ 'Category Name': '结构梁', 'Type Name': '防火涂料钢梁' }, 'STR', '钢梁刷防火涂料仍是结构');
+eq({ 'Category Name': '楼板', '系统名称': '消防' }, 'ARCH', '楼板不因系统名叫消防就进消防');
+// 消防系统本体不能被误伤
+eq({ 'Category Name': '喷头', '系统名称': '消防喷淋' }, 'FIRE', '喷淋头仍是消防');
+eq({ 'Category Name': '风管', '系统缩写': 'PY', '系统名称': '排烟' }, 'FIRE', '排烟风管仍是消防');
+eq({ 'Category Name': '管道', '系统名称': '消火栓' }, 'FIRE', '消火栓管道仍是消防');
+// 与设备层口径一致：同一根构件两档归属相同
+const wall = { 'Category Name': '墙', 族: '基本墙', 'Type Name': '3H防火板墙_150' };
+const wCode = disciplineCode(wall, { name: '基本墙_3H防火板墙_150_1055' });
+const wKind = equipmentKind(wall, '基本墙_3H防火板墙_150_1055');
+if (!(wCode === 'ARCH' && wKind === NON_MEP)) failed++;
+console.log(`${wCode === 'ARCH' && wKind === NON_MEP ? '✓' : '✗'} 专业层与设备层同一口径（${disciplineName(wCode)} / ${wKind}）`);
 
 console.log('--- 表结构自检 ---');
 const bad = Object.entries(ABBR_DISCIPLINE).filter(([k, v]) => k !== k.toUpperCase() || !disciplineName(v));

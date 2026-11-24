@@ -95,8 +95,8 @@ const tree = createTree($('tree'), {
   onZoom: (node) => selectNode(node, { zoom: true }),
 });
 
-// 分组方式下拉：四种视图平铺。
-// 不分 optgroup —— 只剩四条，分两级反而多占一行、还让人以为是两套并行的树。
+// 分组方式下拉：五种视图平铺（顺序即 GROUP_MODES 的键序，第一个是默认值）。
+// 不分 optgroup —— 就这几条，分两级反而多占一行、还让人以为是两套并行的树。
 const treeGroupEl = $('treeGroup');
 for (const [id, m] of Object.entries(GROUP_MODES)) {
   const opt = document.createElement('option');

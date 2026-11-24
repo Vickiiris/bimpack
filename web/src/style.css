@@ -234,6 +234,9 @@ html, body {
 .node.disc-STR   { --disc: #98a2b3; }
 .node.disc-OTHER,
 .node.disc-NONE  { --disc: #d0d5dd; }
+/* 「管综」「智能化」这类从专业里拎出来的分类：不是专业，只用圆点占位对齐 */
+.node.disc-bucket { --disc: #c4cad3; }   /* 管综：中性灰 */
+.node.disc-smart  { --disc: #9b8afb; }   /* 智能化：淡紫，比安防的紫更浅，一眼能分开 */
 
 /* 系统分组后面的中文名：CN 冷凝水 */
 .node-hint {

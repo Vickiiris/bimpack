@@ -91,12 +91,42 @@ const okDepth = sys?.fields?.length === 2;
 if (!okDepth) failed++;
 console.log(`${okDepth ? '✓' : '✗'} 两级分组深度正确`);
 
-// 下拉精简：只留四种视图，同义变体（族 / 标高 / 系统→类别→类型）不再注册
+// 下拉视图：同义变体（族 / 标高 / 系统→类别→类型）不再注册；
+// 主干「专业›系统›类别›类型」+ 两级「专业›设备分类」，以及系统/类别两个换轴视图
 const modes = Object.keys(GROUP_MODES);
-const want = ['unified', 'system', 'category', 'raw'];
+const want = ['unified', 'discEquip', 'system', 'category', 'raw'];
 const okList = modes.join(',') === want.join(',');
 if (!okList) failed++;
-console.log(`${okList ? '✓' : '✗'} 只剩 4 种视图：${modes.join(' / ')}`);
+console.log(`${okList ? '✓' : '✗'} 共 5 种视图：${modes.join(' / ')}`);
+
+const un = GROUP_MODES.unified;
+const okUnDepth = un?.fields?.map((f) => f.key).join(',') === '专业,系统名称,Category Name,Type Name';
+if (!okUnDepth) failed++;
+console.log(`${okUnDepth ? '✓' : '✗'} 主干是四层「专业 → 系统 → 类别 → 类型」`);
+const okGone = !('equipment' in GROUP_MODES);
+if (!okGone) failed++;
+console.log(`${okGone ? '✓' : '✗'} 「系统›专业›设备」已下架`);
+
+// 新增的两级视图：专业 → 设备分类，管综单独成一级
+const de = GROUP_MODES.discEquip;
+const okDeDepth = de?.fields?.length === 2
+  && de.fields[0].key === '专业' && de.fields[0].label === '专业'
+  && de.fields[1].key === '设备分类' && de.fields[1].label === '设备分类';
+if (!okDeDepth) failed++;
+console.log(`${okDeDepth ? '✓' : '✗'} 两级视图字段是「专业 → 设备分类」`);
+const okDePipe = typeof de?.fields?.[0]?.fix === 'function'
+  && de.fields[0].fix('暖通空调', { 'Category Name': '风管' }, { name: '送风管 SF 1' }) === '管综'
+  && de.fields[0].fix('暖通空调', {}, { name: '风机盘管 FCU-01' }) === '暖通空调';
+if (!okDePipe) failed++;
+console.log(`${okDePipe ? '✓' : '✗'} 两级视图里管综也是单独一级，设备留在专业下`);
+const okDeRank = typeof de?.fields?.[0]?.rank === 'function'
+  && de.fields[0].rank('管综') > de.fields[0].rank('暖通空调');
+if (!okDeRank) failed++;
+console.log(`${okDeRank ? '✓' : '✗'} 两级视图的专业按业务序排（暖通在前、管综压最后）`);
+const okDeKind = de?.fields?.[1]?.map?.('', {}, { name: '风机盘管 FCU-01' }) === '风机盘管'
+  && de.fields[1].map('', { 'Category Name': '风管' }, { name: '送风管 SF 1' }) === '风管';
+if (!okDeKind) failed++;
+console.log(`${okDeKind ? '✓' : '✗'} 第二层：设备给设备分类、管综给 Revit 类别`);
 
 console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
 process.exitCode = failed ? 1 : 0;
