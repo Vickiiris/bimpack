@@ -177,6 +177,7 @@ bimpack/
 | `e2e.mjs` | 真实 Chrome 走全流程（`--no-process` 时只测查看） |
 | `acceptance.mjs` | 压缩验收：属性零丢失、材质不变、几何不走形 |
 | `verify-view.mjs` | 取景不裁切、树与面板、单击不动相机 |
+| `camera-return.mjs` | 双击聚焦后能原路返回（再双击 / Esc / 双击空白）、过渡有中间帧、聚焦后滚轮能拉回全景 |
 | `discipline.mjs` | 专业判定规则单测（纯 Node） |
 | `system-abbr.mjs` | 「系统名称 → 缩写」归类规则单测（编号不参与） |
 | `tree-system.mjs` | 树按「系统」分组的结构断言 |

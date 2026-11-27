@@ -106,13 +106,29 @@ export function createViewer(canvas) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    // 面板收起/展开会改变宽高比，没被用户动过就重新取景，保证一直"装得下"
-    if (!userMoved && modelRoot && !modelBox.isEmpty()) fit();
+    // 面板收起/展开会改变宽高比，没被用户动过就重新取景，保证一直"装得下"。
+    // 这里必须是瞬时摆位：拖窗口时 ResizeObserver 会连续触发，动画会互相打架
+    if (!userMoved && modelRoot && !modelBox.isEmpty()) fit(modelBox, undefined, { animate: false });
   }
 
   const ro = new ResizeObserver(resize);
   ro.observe(canvas.parentElement);
   resize();
+
+  // ---- 相机过渡：动画期间自己插值，交还给 OrbitControls 时它能从 position/target 重算球坐标 ----
+  /** 正在进行的相机动画（null = 无）。必须在 tick() 之前声明，首帧就会读它 */
+  let anim = null;
+  /**
+   * 当前取景对象的参考半径（fit = 整模型，focus = 那个构件）。
+   * 近/远裁面按「当前相机距离 + 这个半径」每帧自算，见 updateClip()。
+   */
+  let clipRadius = 1;
+  /**
+   * 「返回点」：双击聚焦之前的相机状态。
+   * 每轮聚焦只在**第一次**记录（A → B 连跳时返回点仍是 A 之前的全景），
+   * 还原后清空；点「适应视图」也会清空。
+   */
+  let savedView = null;
 
   function tick() {
     rafId = requestAnimationFrame(tick);
@@ -125,7 +141,9 @@ export function createViewer(canvas) {
       acc = 0;
       frameCb?.(fps);
     }
-    controls.update();
+    if (anim) stepAnim(performance.now());
+    else controls.update();
+    updateClip();
     renderer.render(scene, camera);
   }
   tick();
@@ -140,12 +158,6 @@ export function createViewer(canvas) {
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
     const fov = Math.min(vFov, hFov);
     return (radius / Math.sin(fov / 2)) * margin;
-  }
-
-  function applyClip(radius, dist) {
-    camera.near = Math.max(0.01, Math.min(radius / 2000, dist / 5000));
-    camera.far = dist + radius * 200;
-    camera.updateProjectionMatrix();
   }
 
   const _corners = Array.from({ length: 8 }, () => new THREE.Vector3());
@@ -195,60 +207,206 @@ export function createViewer(canvas) {
     return dist;
   }
 
-  /** 按包围盒把相机摆到能看全的位置 */
-  function fit(box = modelBox, dir = new THREE.Vector3(1, 0.72, 1)) {
-    if (!box || box.isEmpty()) return false;
+  const HOME_DIR = new THREE.Vector3(1, 0.72, 1);
+  /** 过渡时长（毫秒）：聚焦略长一点，返回 / 适应视图短一点，避免拖沓 */
+  const DUR_FOCUS = 620;
+  const DUR_RETURN = 520;
+  const DUR_FIT = 460;
 
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  /**
+   * 相机状态快照：position + target + near/far + 距离上下限。
+   * OrbitControls 每次 update 都从「position − target」重算球坐标，所以这五个值足以还原一次取景。
+   */
+  function snapshot() {
+    return {
+      pos: camera.position.clone(),
+      target: controls.target.clone(),
+      near: camera.near,
+      far: camera.far,
+      minDistance: controls.minDistance,
+      maxDistance: controls.maxDistance,
+      radius: clipRadius,
+      userMoved,
+    };
+  }
+
+  /**
+   * 近 / 远裁面跟着**当前观察距离**走，而不是钉死在某个视点算出来的值。
+   *
+   * 为什么必须这样：聚焦一个构件后相机距离很小，如果 far 还停在那里算出的值，
+   * 用户一旦用滚轮往外拉，整栋楼就会被远裁面切掉 —— 表现正是「滚轮往下拉看不到东西、回不去」。
+   * 反过来，如果为了让远处可见把 far 一次性放大，近距离又会 z-fighting。
+   * 所以每帧按 d 重算：near 取 d/5000（不许小于 0.01），far 取 max(d×4, 取景半径×200)。
+   */
+  function updateClip() {
+    const d = Math.max(camera.position.distanceTo(controls.target), 1e-6);
+    // near 跟着 d 走（d/3000）：拉得越远，近裁面越大，深度精度才够；
+    // 上限再压一个 clipRadius/50，贴着构件看时不会被裁掉。
+    const near = Math.max(0.01, Math.min(d / 3000, clipRadius / 50));
+    const far = Math.max(d * 4, clipRadius * 200);
+    if (Math.abs(near - camera.near) > camera.near * 1e-3 || Math.abs(far - camera.far) > camera.far * 1e-3) {
+      camera.near = near;
+      camera.far = far;
+      camera.updateProjectionMatrix();
+    }
+  }
+
+  function applyView(v) {
+    camera.position.copy(v.pos);
+    controls.target.copy(v.target);
+    camera.near = v.near;
+    camera.far = v.far;
+    if (v.radius) clipRadius = v.radius;
+    camera.updateProjectionMatrix();
+    controls.minDistance = v.minDistance;
+    controls.maxDistance = v.maxDistance;
+    controls.update();
+    updateClip();
+    userMoved = v.userMoved;
+  }
+
+  /** 立即结束过渡（用户一动相机就交还控制权，停在中途，不硬拽到终点） */
+  function stopAnim() {
+    if (!anim) return false;
+    anim = null;
+    controls.update();
+    return true;
+  }
+
+  function flyTo(to, duration) {
+    if (!(duration > 0)) { applyView(to); return; }
+    // 立刻把 userMoved 置成目标值：过渡途中若发生 resize（面板宽度变了），
+    // 不能让 resize 里的自动取景把正在飞的相机拽回全景。
+    userMoved = to.userMoved;
+    anim = {
+      from: snapshot(),
+      to,
+      t0: performance.now(),
+      dur: duration,
+    };
+    // 过渡期间距离限制按终点放开，否则中途会被 maxDistance 拽一下
+    controls.minDistance = Math.min(controls.minDistance, to.minDistance);
+    controls.maxDistance = Math.max(controls.maxDistance, to.maxDistance);
+  }
+
+  function stepAnim(now) {
+    const a = anim;
+    if (!a) return;
+    const t = Math.min(1, (now - a.t0) / a.dur);
+    const k = easeInOut(t);
+    camera.position.lerpVectors(a.from.pos, a.to.pos, k);
+    controls.target.lerpVectors(a.from.target, a.to.target, k);
+    camera.near = Math.max(1e-4, a.from.near + (a.to.near - a.from.near) * k);
+    camera.far = Math.max(camera.near * 10, a.from.far + (a.to.far - a.from.far) * k);
+    camera.updateProjectionMatrix();
+    camera.lookAt(controls.target);
+    camera.updateMatrixWorld(true);
+    if (t >= 1) {
+      anim = null;
+      applyView(a.to);
+    }
+  }
+
+  /**
+   * 解出「看向 box、方向 dir、按角点收紧到占画面 fill」的相机状态。
+   *
+   * tightenDistance 是「先把相机摆过去再量投影」，量完必须把相机还原 ——
+   * 否则动画的起点就被弄脏了（会看到第一帧闪一下）。
+   */
+  function viewFor(box, dir, margin, fill, maxFactor) {
+    const keep = snapshot();
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const center = sphere.center.clone();
     const radius = Math.max(sphere.radius, 1e-3);
     const d = dir.clone().normalize();
+    const dist = tightenDistance(box, center, d, distanceFor(radius, margin), fill);
 
-    // 先按包围球给个上界，再用角点投影收紧到刚好铺满（留 10% 余量）
-    const dist = tightenDistance(box, center, d, distanceFor(radius, 1.18), 0.9);
-    applyClip(radius, dist);
-
-    camera.position.copy(center).addScaledVector(d, dist);
-    camera.near = Math.max(0.01, Math.min(radius / 2000, dist / 5000));
-    camera.far = dist + radius * 200;
+    camera.position.copy(keep.pos);
+    camera.near = keep.near;
+    camera.far = keep.far;
     camera.updateProjectionMatrix();
 
-    controls.target.copy(center);
-    controls.minDistance = radius * 0.001;
-    // 必须放开到比 dist 大，否则 update() 会把相机拽回来，模型永远装不满
-    controls.maxDistance = Math.max(dist * 6, radius * 12);
-    controls.update();
+    const near = Math.max(0.01, Math.min(radius / 2000, dist / 5000));
+    const far = dist + radius * 200;
 
+    /**
+     * 拉远上限必须照顾到「整模型」：
+     * 聚焦一个螺栓时 box 只有几厘米，dist×8 连一层楼都拉不到，
+     * 滚轮往下就「顶住」了 —— 这正是「滚轮无法往下、回不到全景」的直接原因。
+     * 所以取「当前取景距离的小倍数」与「整模型取景距离」的较大者。
+     */
+    const modelRadius = modelBox.isEmpty()
+      ? radius
+      : Math.max(modelBox.getBoundingSphere(new THREE.Sphere()).radius, radius);
+    const modelDist = distanceFor(modelRadius, 1.18);
+
+    return {
+      pos: center.clone().addScaledVector(d, dist),
+      target: center,
+      near,
+      far,
+      radius,
+      minDistance: Math.max(radius * 0.001, modelRadius * 1e-5),
+      maxDistance: Math.max(dist * (maxFactor || 6), radius * 12, modelDist * 2),
+      userMoved: false,
+    };
+  }
+
+  /**
+   * 按包围盒把相机摆到能看全的位置（=「适应视图」/ 初始视角）。
+   * @param {{animate?: boolean}} [opts] animate=false 用于加载新模型：直接摆好，不从旧模型的视角飞过来
+   */
+  function fit(box = modelBox, dir = HOME_DIR, opts = {}) {
+    if (!box || box.isEmpty()) return false;
+    const v = viewFor(box, dir, 1.18, 0.9, 6);
+    v.userMoved = false;
+
+    // 回到全景就等同于「初始状态」：旧的返回点作废，避免 Esc 又飞回复焦之前的视角
+    savedView = null;
+    flyTo(v, opts.animate === false ? 0 : DUR_FIT);
+
+    const center = v.target;
+    const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 1e-3);
     grid.position.set(center.x, box.min.y, center.z);
     grid.scale.setScalar(Math.max(1, radius / 25));
-
-    userMoved = false;
     return true;
   }
 
-  /** 聚焦到某个构件/分组的包围盒（树上双击、3D 里定位时用） */
-  function focusOn(box, margin = 1.35) {
+  /**
+   * 聚焦到某个构件/分组的包围盒（树上双击、3D 里双击时用）。
+   *
+   * 第一轮聚焦前把当前视角记成「返回点」，`restoreView()` 原路飞回；
+   * 连续双击不同目标时不覆盖返回点，所以最终总能回到最初的全景。
+   */
+  function focusOn(box, opts = {}) {
     if (!box || box.isEmpty()) return false;
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const center = sphere.center.clone();
-    const radius = Math.max(sphere.radius, 1e-3);
-
     const dir = camera.position.clone().sub(controls.target);
     if (dir.lengthSq() < 1e-9) dir.set(1, 0.72, 1);
     dir.normalize();
 
     // 构件本身也可能很扁（一块楼板），同样用角点收紧；margin 比整体取景松一点
-    const dist = tightenDistance(box, center, dir, distanceFor(radius, margin + 0.6), 0.82);
-    applyClip(radius, dist);
+    const v = viewFor(box, dir, 1.95, 0.82, 8);
+    v.userMoved = true; // 已经对准某个构件，别让 resize 把它拉回全景
 
-    controls.target.copy(center);
-    camera.position.copy(center).addScaledVector(dir, dist);
-    controls.minDistance = radius * 0.001;
-    controls.maxDistance = Math.max(dist * 8, radius * 20);
-    controls.update();
-
-    userMoved = true; // 已经对准某个构件，别让 resize 把它拉回全景
+    if (opts.remember !== false && !savedView) savedView = snapshot();
+    flyTo(v, opts.duration ?? DUR_FOCUS);
     return true;
+  }
+
+  /**
+   * 回到初始状态：有返回点就飞回返回点，没有就重新整体取景（适应视图）。
+   * @returns {boolean} 是否有可复原的视角
+   */
+  function restoreView(opts = {}) {
+    const v = savedView;
+    savedView = null;
+    if (v) {
+      flyTo({ ...v, userMoved: v.userMoved }, opts.duration ?? DUR_RETURN);
+      return true;
+    }
+    return fit(modelBox, HOME_DIR, { ...opts, duration: opts.duration ?? DUR_FIT });
   }
 
   /** 俯视（正上方看平面） */
@@ -260,6 +418,8 @@ export function createViewer(canvas) {
   function setModel(root, box = null) {
     if (modelRoot) scene.remove(modelRoot);
     modelRoot = root;
+    savedView = null;
+    stopAnim();
     if (!root) {
       modelBox.makeEmpty();
       return;
@@ -267,7 +427,8 @@ export function createViewer(canvas) {
     scene.add(root);
     // 优先用调用方给的世界包围盒（批处理时顺手累出来的，比 setFromObject 可靠）
     modelBox = (box && !box.isEmpty()) ? box.clone() : new THREE.Box3().setFromObject(root);
-    fit();
+    // 换模型直接摆到初始视角，别从上一个模型的视角飞过来
+    fit(modelBox, HOME_DIR, { animate: false });
   }
 
   /**
@@ -287,18 +448,31 @@ export function createViewer(canvas) {
   let downX = 0;
   let downY = 0;
   let clickHandler = null;
+  let dblclickHandler = null;
 
   canvas.addEventListener('pointerdown', (e) => {
+    stopAnim(); // 用户接手：停在中途，别和动画抢相机
     downAt = performance.now();
     downX = e.clientX;
     downY = e.clientY;
   });
+  canvas.addEventListener('wheel', stopAnim, { passive: true });
 
   canvas.addEventListener('pointerup', (e) => {
     const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
     const held = performance.now() - downAt;
     if (moved > 5 || held > 500) return; // 是在转视角，不是在点选
     clickHandler?.(e.clientX, e.clientY);
+  });
+
+  /**
+   * 双击：3D 里双击构件的入口（触发的是「单击选中 + 相机聚焦」）。
+   * 同样排掉拖拽 —— 转完视角松手时浏览器也可能补一个 dblclick，不能当双击用。
+   */
+  canvas.addEventListener('dblclick', (e) => {
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (moved > 5) return;
+    dblclickHandler?.(e.clientX, e.clientY);
   });
 
   return {
@@ -316,11 +490,18 @@ export function createViewer(canvas) {
     fit,
     topView,
     focusOn,
+    /** 回到聚焦前的视角；没有返回点时退回「适应视图」 */
+    restoreView,
+    /** 是否有可复原的返回点（Esc / 再次双击时用） */
+    get canRestore() { return !!savedView; },
+    /** 相机是否正在过渡（动画期间不要再叠一次跳转） */
+    get animating() { return !!anim; },
     pick,
     resize,
     setGrid(v) { grid.visible = v; return v; },
     get gridVisible() { return grid.visible; },
     onClick(fn) { clickHandler = fn; },
+    onDblClick(fn) { dblclickHandler = fn; },
     onFrame(fn) { frameCb = fn; },
     dispose() {
       cancelAnimationFrame(rafId);

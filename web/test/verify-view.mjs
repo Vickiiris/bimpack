@@ -114,14 +114,14 @@ await p.evaluate(() => {
   const leaf = [...document.querySelectorAll('#tree .node')].find((r) => r.__node && !r.__node.isGroup);
   leaf?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
 });
-await p.waitForTimeout(300);
+await p.waitForTimeout(900);   // 相机是平滑过渡（约 620ms），等动画结束再量
 const afterDbl = await p.evaluate(() => window.__bim.viewer.camera.position.toArray());
 const movedDbl = Math.hypot(...after.map((v, i) => v - afterDbl[i]));
 console.log(`  双击 → 相机位移 ${movedDbl.toFixed(1)}  →  ${movedDbl > 1 ? '✓ 已定位' : '✗ 没动'}`);
 
 /** 面板收起（先回到"适应视图"，否则测的是刚才双击放大后的画面） */
 await p.evaluate(() => document.getElementById('btnFit').click());
-await p.waitForTimeout(400);
+await p.waitForTimeout(800);
 const panels = await p.evaluate(async () => {
   const snap = () => ({
     left: !document.getElementById('panelLeft').hidden,
@@ -161,7 +161,7 @@ console.log(`  全关   左${panels.none.left ? '开' : '关'}/右${panels.none.
 
 /** 适应视图按钮 */
 await p.evaluate(() => document.getElementById('btnFit').click());
-await p.waitForTimeout(400);
+await p.waitForTimeout(800);
 const fitAgain = await p.evaluate(() => {
   const { viewer } = window.__bim;
   const box = viewer.modelBox.clone();

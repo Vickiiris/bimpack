@@ -6,7 +6,10 @@
  *   「压缩处理」：meshopt 重编码 + 19 项属性校验，慢但能出交付级文件。
  *
  * 交互约定（按使用反馈定的）：
- *   单击构件 = 高亮 + 出属性，**相机不动**；只有双击（或点「适应视图」）才移动相机。
+ *   单击构件 = 高亮 + 出属性，**相机不动**；双击才移动相机，而且**能原路返回**：
+ *   · 双击树节点 / 3D 里的构件 → 平滑飞过去（第一轮会记下当前视角当返回点）
+ *   · 再双击同一个目标、按 Esc、双击空白处、点「适应视图」→ 平滑飞回初始视角
+ *   这样就不必为了恢复视角去点「适应视图」（这是之前的槽点）。
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -113,6 +116,8 @@ treeGroupEl.onchange = (e) => {
   if (!state.sceneRoot || !state.batched) return;
   const res = tree.setMode(e.target.value);
   syncModeHint();
+  // 树重建后旧节点对象失效：只清「同一目标再双击」的身份，相机返回点仍由 viewer 保留
+  focusTarget = null;
   if (res) updateTreeCount(res);
   // 树重建后选中态丢了，重新按当前选中回填
   if (lastRec?.object) tree.reveal(lastRec.object);
@@ -139,6 +144,11 @@ function collectRecs(node) {
 // ---------- 选中 ----------
 let selectedRecs = [];
 let lastRec = null;
+/**
+ * 当前双击聚焦的目标（树节点或 3D 构件的 Object3D）。
+ * 只用于「再双击同一目标 = 返回」，判断用对象身份；相机真正的返回点由 viewer 侧记。
+ */
+let focusTarget = null;
 
 /**
  * @param {object} node 树节点
@@ -154,10 +164,35 @@ function selectNode(node, opts = {}) {
 
   if (opts.zoom) {
     const box = recs.length ? unionBox(recs) : (node.obj ? new THREE.Box3().setFromObject(node.obj) : null);
-    if (box && !box.isEmpty()) viewer.focusOn(box);
+    focusCamera(box, node);
   }
 
   showProps(recs, node);
+}
+
+/**
+ * 双击跳转的统一入口（树节点与 3D 构件都走这里）。
+ *
+ * 同一个目标再双击 = 取消聚焦、飞回初始视角；换目标则继续放大，
+ * 但**返回点仍是第一次聚焦之前的位置**（viewer 侧只在没有返回点时记录）。
+ */
+function focusCamera(box, key) {
+  if (!box || box.isEmpty()) return;
+  if (key && key === focusTarget) {
+    viewer.restoreView();
+    focusTarget = null;
+    toast('已回到初始视角');
+    return;
+  }
+  if (!viewer.focusOn(box)) return;
+  focusTarget = key || null;
+  toast('已定位 · 再双击同一目标或按 Esc 回到初始视角', 'ok');
+}
+
+/** 回到初始视角（Esc / 双击空白共用）。没有返回点时退化为整体取景，不会「按了没反应」 */
+function backToStart() {
+  focusTarget = null;
+  return viewer.restoreView();
 }
 
 /** 3D 里点选：只高亮 + 出属性 + 在树里定位，相机保持不动 */
@@ -242,13 +277,28 @@ viewer.onClick((x, y) => {
   else clearSelection(); // 点到空白处 = 取消高亮
 });
 
+/** 3D 里双击构件：选中 + 平滑飞过去；双击空白 = 回初始视角 */
+viewer.onDblClick((x, y) => {
+  if (!state.batched) return;
+  const hit = viewer.pick(x, y, (rc) => state.batched.pick(rc));
+  if (hit?.rec) {
+    selectRec(hit.rec);
+    focusCamera(unionBox([hit.rec]), hit.rec.object);
+    tree.reveal(hit.rec.object);
+    return;
+  }
+  if (backToStart()) toast('已回到初始视角');
+});
+
 viewer.onFrame((fps) => {
   $('hudFps').textContent = fps;
 });
 
 // ---------- 视图工具 ----------
 $('btnFit').onclick = () => {
-  if (viewer.fit()) toast('已适应视图');
+  if (!viewer.fit()) return;
+  focusTarget = null;   // 回到全景即初始状态，清掉聚焦目标
+  toast('已适应视图');
 };
 $('btnTop').onclick = () => viewer.topView();
 $('btnGrid').onclick = () => {
@@ -500,6 +550,7 @@ async function renderBytes(bytes, baseName) {
   state.loadedOnce = true;
 
   viewer.setModel(batched.group, batched.box);
+  focusTarget = null;   // 新模型 = 新初始视角
 
   // 层级树用「原始 scene 结构」，批处理只是把几何搬进 BatchedMesh，Object3D 仍在
   const res = tree.setModel(gltf.scene, batched.objectToRecs);
@@ -658,7 +709,11 @@ window.addEventListener('keydown', (e) => {
   const tag = e.target?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
-  if (e.key === 'Escape') clearSelection();
+  if (e.key === 'Escape') {
+    // 聚焦状态下 Esc 先回初始视角（再按一次才清选中），符合"退出放大"的直觉
+    if (viewer.canRestore) { if (backToStart()) toast('已回到初始视角'); }
+    else clearSelection();
+  }
   if (!state.loadedOnce) return;
   if (e.key === '1') togglePanel('left');
   if (e.key === '2') togglePanel('right');
